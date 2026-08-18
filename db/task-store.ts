@@ -167,6 +167,19 @@ export async function updateTask(identity: AuthIdentity, taskId: string, input: 
   return loadWorkspace(identity);
 }
 
+export async function deleteTask(identity: AuthIdentity, taskId: string) {
+  const user = await currentUser(identity);
+  const db = getDatabase();
+  const task = await db.prepare("SELECT creator_id FROM tasks WHERE id = ?")
+    .bind(taskId).first<{ creator_id: string }>();
+  if (!task || (task.creator_id !== user.id && user.role !== "admin")) {
+    throw new Error("No tenés permiso para eliminar esta tarea");
+  }
+
+  await db.prepare("DELETE FROM tasks WHERE id = ?").bind(taskId).run();
+  return loadWorkspace(identity);
+}
+
 export async function addComment(identity: AuthIdentity, taskId: string, bodyValue: string) {
   const user = await currentUser(identity);
   const body = bodyValue.trim();

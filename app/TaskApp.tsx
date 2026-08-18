@@ -66,11 +66,15 @@ export default function TaskApp({ initialData }: { initialData: WorkspaceData })
     });
   }, [data, view, assigneeFilter, search]);
 
-  async function mutate(url: string, method: "POST" | "PATCH", body: unknown, success: string) {
+  async function mutate(url: string, method: "POST" | "PATCH" | "DELETE", body: unknown, success: string) {
     setSaving(true);
     setNotice(null);
     try {
-      const response = await fetch(url, { method, headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+      const response = await fetch(url, {
+        method,
+        headers: body === undefined ? undefined : { "content-type": "application/json" },
+        body: body === undefined ? undefined : JSON.stringify(body),
+      });
       const payload = await response.json() as WorkspaceData & { error?: string };
       if (!response.ok) throw new Error(payload.error ?? "No se pudo guardar el cambio");
       setData(payload);
@@ -97,6 +101,13 @@ export default function TaskApp({ initialData }: { initialData: WorkspaceData })
   }
   async function updateSelected(input: Record<string, unknown>, success = "Tarea actualizada") {
     if (selectedTask) await mutate(`/api/tasks/${selectedTask.id}`, "PATCH", input, success);
+  }
+  async function deleteSelected() {
+    if (!selectedTask) return;
+    const confirmed = window.confirm(`¿Eliminar “${selectedTask.title}”?\n\nLa tarea y todos sus comentarios se borrarán definitivamente.`);
+    if (!confirmed) return;
+    const ok = await mutate(`/api/tasks/${selectedTask.id}`, "DELETE", undefined, "Tarea eliminada");
+    if (ok) setSelectedTaskId(null);
   }
   async function submitComment(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -223,6 +234,12 @@ export default function TaskApp({ initialData }: { initialData: WorkspaceData })
               </div>
               <form className="comment-form" onSubmit={submitComment}><textarea name="comment" rows={2} placeholder="Escribí una actualización…" /><button className="primary-button" disabled={saving}>Comentar</button></form>
             </section>
+            {(selectedTask.creatorId === data.currentUser.id || data.currentUser.role === "admin") && (
+              <div className="delete-task-zone">
+                <div><strong>¿Es una tarea finalizada o de prueba?</strong><span>Podés eliminarla junto con todos sus comentarios.</span></div>
+                <button className="danger-button" disabled={saving} onClick={deleteSelected}>{saving ? "Eliminando…" : "Eliminar tarea"}</button>
+              </div>
+            )}
           </aside>
         </div>
       )}
