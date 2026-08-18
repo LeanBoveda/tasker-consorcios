@@ -10,7 +10,7 @@ export const users = sqliteTable("users", {
   status: text("status", { enum: ["active", "invited"] }).notNull().default("active"),
   passwordHash: text("password_hash"),
   passwordSalt: text("password_salt"),
-  passwordIterations: integer("password_iterations").notNull().default(210000),
+  passwordIterations: integer("password_iterations").notNull().default(100000),
   createdAt: integer("created_at").notNull(),
   lastSeenAt: integer("last_seen_at").notNull(),
 }, (table) => [

@@ -1,8 +1,8 @@
 import { ensureDatabase, getDatabase } from "./database";
 
-const BOOTSTRAP_SALT = "b0fd37820b5fbe629dba295ca051a666";
-const BOOTSTRAP_HASH = "c3e958fb7e3ce85699a04885e8b5ab9e67ba4acbc061a168f44686bc2b94dadd";
-const PASSWORD_ITERATIONS = 210000;
+const BOOTSTRAP_SALT = "a5ce7dd3e178939670cfabadb77ce002";
+const BOOTSTRAP_HASH = "5d7607f8cf4b631c8f49e37fbe77e0bee69f001ee5d3d77c3f46db423757b1ef";
+const PASSWORD_ITERATIONS = 100000;
 const SESSION_DURATION_MS = 30 * 24 * 60 * 60 * 1000;
 export const SESSION_COOKIE_NAME = "tasker_session";
 
@@ -71,9 +71,9 @@ export async function ensureBootstrapAdmin() {
   await ensureDatabase();
   const db = getDatabase();
   const configured = await db.prepare(
-    "SELECT id, password_hash FROM users WHERE username = 'admin'"
-  ).first<{ id: string; password_hash: string | null }>();
-  if (configured?.password_hash) return;
+    "SELECT id, password_hash, password_iterations FROM users WHERE username = 'admin'"
+  ).first<{ id: string; password_hash: string | null; password_iterations: number }>();
+  if (configured?.password_hash && configured.password_iterations <= PASSWORD_ITERATIONS) return;
 
   const existingAdmin = configured ?? await db.prepare(
     "SELECT id, password_hash FROM users WHERE role = 'admin' ORDER BY created_at LIMIT 1"
@@ -105,6 +105,9 @@ export async function login(usernameValue: string, password: string) {
 
   if (!user || user.status !== "active" || !user.password_hash || !user.password_salt) {
     throw new Error("Usuario o contraseña incorrectos");
+  }
+  if (user.password_iterations > PASSWORD_ITERATIONS) {
+    throw new Error("Este usuario debe volver a cargarse desde el Excel");
   }
   const candidate = await hashPassword(password, user.password_salt, user.password_iterations);
   if (!equalHex(candidate, user.password_hash)) throw new Error("Usuario o contraseña incorrectos");

@@ -30,7 +30,7 @@ async function initializeDatabase() {
       status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'invited')),
       password_hash TEXT,
       password_salt TEXT,
-      password_iterations INTEGER NOT NULL DEFAULT 210000,
+      password_iterations INTEGER NOT NULL DEFAULT 100000,
       created_at INTEGER NOT NULL,
       last_seen_at INTEGER NOT NULL
     )`),
@@ -68,7 +68,7 @@ async function initializeDatabase() {
     ["username", "ALTER TABLE users ADD COLUMN username TEXT"],
     ["password_hash", "ALTER TABLE users ADD COLUMN password_hash TEXT"],
     ["password_salt", "ALTER TABLE users ADD COLUMN password_salt TEXT"],
-    ["password_iterations", "ALTER TABLE users ADD COLUMN password_iterations INTEGER NOT NULL DEFAULT 210000"],
+    ["password_iterations", "ALTER TABLE users ADD COLUMN password_iterations INTEGER NOT NULL DEFAULT 100000"],
   ];
   for (const [column, sql] of additions) {
     if (!columns.has(column)) await db.prepare(sql).run();
