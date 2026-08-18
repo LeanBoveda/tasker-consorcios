@@ -19,6 +19,17 @@ export const users = sqliteTable("users", {
   uniqueIndex("users_email_unique").on(table.email),
 ]);
 
+export const consorcios = sqliteTable("consorcios", {
+  id: text("id").primaryKey(),
+  name: text("name").notNull(),
+  address: text("address").notNull().default(""),
+  notes: text("notes").notNull().default(""),
+  createdAt: integer("created_at").notNull(),
+  updatedAt: integer("updated_at").notNull(),
+}, (table) => [
+  uniqueIndex("consorcios_name_unique").on(table.name),
+]);
+
 export const tasks = sqliteTable("tasks", {
   id: text("id").primaryKey(),
   title: text("title").notNull(),
@@ -27,6 +38,7 @@ export const tasks = sqliteTable("tasks", {
   priority: text("priority", { enum: ["low", "medium", "high"] }).notNull().default("medium"),
   status: text("status", { enum: ["pending", "in_progress", "review", "done"] }).notNull().default("pending"),
   dueDate: text("due_date"),
+  consortiumId: text("consortium_id").references(() => consorcios.id, { onDelete: "set null" }),
   creatorId: text("creator_id").notNull().references(() => users.id, { onDelete: "cascade" }),
   assigneeId: text("assignee_id").references(() => users.id, { onDelete: "set null" }),
   createdAt: integer("created_at").notNull(),
@@ -34,6 +46,7 @@ export const tasks = sqliteTable("tasks", {
 }, (table) => [
   index("idx_tasks_creator_status").on(table.creatorId, table.status),
   index("idx_tasks_assignee_status").on(table.assigneeId, table.status),
+  index("idx_tasks_consortium_id").on(table.consortiumId),
 ]);
 
 export const comments = sqliteTable("comments", {

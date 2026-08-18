@@ -9,6 +9,14 @@ export type AppUser = {
   role: "admin" | "member";
   status: "active" | "invited";
 };
+export type ConsortiumItem = {
+  id: string;
+  name: string;
+  address: string;
+  notes: string;
+  createdAt: number;
+  updatedAt: number;
+};
 export type TaskComment = {
   id: string; body: string; createdAt: number; authorId: string; authorName: string;
 };
@@ -20,6 +28,7 @@ export type TaskItem = {
   priority: "low" | "medium" | "high";
   status: "pending" | "in_progress" | "review" | "done";
   dueDate: string | null;
+  consortiumId: string | null;
   creatorId: string;
   creatorName: string;
   assigneeId: string | null;
@@ -28,11 +37,12 @@ export type TaskItem = {
   updatedAt: number;
   comments: TaskComment[];
 };
-export type WorkspaceData = { currentUser: AppUser; users: AppUser[]; tasks: TaskItem[] };
+export type WorkspaceData = { currentUser: AppUser; users: AppUser[]; consorcios: ConsortiumItem[]; tasks: TaskItem[] };
 
 type TaskRow = {
   id: string; title: string; description: string; building: string;
   priority: TaskItem["priority"]; status: TaskItem["status"]; due_date: string | null;
+  consortium_id: string | null;
   creator_id: string; creator_name: string; assignee_id: string | null;
   assignee_name: string | null; created_at: number; updated_at: number;
 };
@@ -57,9 +67,12 @@ export async function loadWorkspace(identity: AuthIdentity): Promise<WorkspaceDa
   const usersResult = await db.prepare(`SELECT id, username, email, name, role, status
     FROM users WHERE status = 'active'
     ORDER BY CASE role WHEN 'admin' THEN 0 ELSE 1 END, name`).all<AppUser>();
+  const consorciosResult = await db.prepare(`SELECT id, name, address, notes,
+      created_at AS createdAt, updated_at AS updatedAt
+    FROM consorcios ORDER BY name COLLATE NOCASE`).all<ConsortiumItem>();
   const tasksResult = await db.prepare(`SELECT
       t.id, t.title, t.description, t.building, t.priority, t.status, t.due_date,
-      t.creator_id, creator.name AS creator_name, t.assignee_id,
+      t.consortium_id, t.creator_id, creator.name AS creator_name, t.assignee_id,
       assignee.name AS assignee_name, t.created_at, t.updated_at
     FROM tasks t
     JOIN users creator ON creator.id = t.creator_id
@@ -84,6 +97,7 @@ export async function loadWorkspace(identity: AuthIdentity): Promise<WorkspaceDa
   return {
     currentUser: user,
     users: usersResult.results ?? [],
+    consorcios: consorciosResult.results ?? [],
     tasks: taskRows.map((task) => ({
       id: task.id,
       title: task.title,
@@ -92,6 +106,7 @@ export async function loadWorkspace(identity: AuthIdentity): Promise<WorkspaceDa
       priority: task.priority,
       status: task.status,
       dueDate: task.due_date,
+      consortiumId: task.consortium_id,
       creatorId: task.creator_id,
       creatorName: task.creator_name,
       assigneeId: task.assignee_id,
@@ -110,7 +125,7 @@ export async function loadWorkspace(identity: AuthIdentity): Promise<WorkspaceDa
 }
 
 export async function createTask(identity: AuthIdentity, input: {
-  title: string; description?: string; building?: string; priority?: string;
+  title: string; description?: string; consortiumId?: string | null; priority?: string;
   status?: string; dueDate?: string | null; assigneeId?: string | null;
 }) {
   const user = await currentUser(identity);
@@ -119,21 +134,28 @@ export async function createTask(identity: AuthIdentity, input: {
   const priority = ["low", "medium", "high"].includes(input.priority ?? "") ? input.priority : "medium";
   const status = ["pending", "in_progress", "review", "done"].includes(input.status ?? "") ? input.status : "pending";
   const db = getDatabase();
+  let building = "";
+  if (input.consortiumId) {
+    const consortium = await db.prepare("SELECT name FROM consorcios WHERE id = ?")
+      .bind(input.consortiumId).first<{ name: string }>();
+    if (!consortium) throw new Error("El consorcio seleccionado no existe");
+    building = consortium.name;
+  }
   if (input.assigneeId) {
     const assignee = await db.prepare("SELECT id FROM users WHERE id = ? AND status = 'active'").bind(input.assigneeId).first();
     if (!assignee) throw new Error("La persona asignada no existe");
   }
   const now = Date.now();
   await db.prepare(`INSERT INTO tasks
-    (id, title, description, building, priority, status, due_date, creator_id, assignee_id, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-    .bind(crypto.randomUUID(), title, input.description?.trim() ?? "", input.building?.trim() ?? "",
-      priority, status, input.dueDate || null, user.id, input.assigneeId || null, now, now).run();
+    (id, title, description, building, priority, status, due_date, consortium_id, creator_id, assignee_id, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+    .bind(crypto.randomUUID(), title, input.description?.trim() ?? "", building,
+      priority, status, input.dueDate || null, input.consortiumId || null, user.id, input.assigneeId || null, now, now).run();
   return loadWorkspace(identity);
 }
 
 export async function updateTask(identity: AuthIdentity, taskId: string, input: {
-  title?: string; description?: string; building?: string; priority?: string;
+  title?: string; description?: string; consortiumId?: string | null; priority?: string;
   status?: string; dueDate?: string | null; assigneeId?: string | null;
 }) {
   const user = await currentUser(identity);
@@ -150,7 +172,17 @@ export async function updateTask(identity: AuthIdentity, taskId: string, input: 
   if (task.creator_id === user.id) {
     if (input.title?.trim()) { fields.push("title = ?"); values.push(input.title.trim()); }
     if (typeof input.description === "string") { fields.push("description = ?"); values.push(input.description.trim()); }
-    if (typeof input.building === "string") { fields.push("building = ?"); values.push(input.building.trim()); }
+    if ("consortiumId" in input) {
+      let building = "";
+      if (input.consortiumId) {
+        const consortium = await db.prepare("SELECT name FROM consorcios WHERE id = ?")
+          .bind(input.consortiumId).first<{ name: string }>();
+        if (!consortium) throw new Error("El consorcio seleccionado no existe");
+        building = consortium.name;
+      }
+      fields.push("consortium_id = ?", "building = ?");
+      values.push(input.consortiumId || null, building);
+    }
     if (input.priority && ["low", "medium", "high"].includes(input.priority)) { fields.push("priority = ?"); values.push(input.priority); }
     if ("dueDate" in input) { fields.push("due_date = ?"); values.push(input.dueDate || null); }
     if ("assigneeId" in input) {
@@ -164,6 +196,63 @@ export async function updateTask(identity: AuthIdentity, taskId: string, input: 
   if (!fields.length) return loadWorkspace(identity);
   fields.push("updated_at = ?"); values.push(Date.now(), taskId);
   await db.prepare(`UPDATE tasks SET ${fields.join(", ")} WHERE id = ?`).bind(...values).run();
+  return loadWorkspace(identity);
+}
+
+async function requireAdmin(identity: AuthIdentity) {
+  const user = await currentUser(identity);
+  if (user.role !== "admin") throw new Error("Solo el administrador puede gestionar consorcios");
+  return user;
+}
+
+export async function createConsortium(identity: AuthIdentity, input: {
+  name?: string; address?: string; notes?: string;
+}) {
+  await requireAdmin(identity);
+  const name = input.name?.trim();
+  if (!name) throw new Error("El nombre del consorcio es obligatorio");
+  const db = getDatabase();
+  const duplicate = await db.prepare("SELECT id FROM consorcios WHERE name = ? COLLATE NOCASE")
+    .bind(name).first();
+  if (duplicate) throw new Error("Ya existe un consorcio con ese nombre");
+  const now = Date.now();
+  await db.prepare(`INSERT INTO consorcios (id, name, address, notes, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?)`)
+    .bind(crypto.randomUUID(), name, input.address?.trim() ?? "", input.notes?.trim() ?? "", now, now).run();
+  return loadWorkspace(identity);
+}
+
+export async function updateConsortium(identity: AuthIdentity, consortiumId: string, input: {
+  name?: string; address?: string; notes?: string;
+}) {
+  await requireAdmin(identity);
+  const name = input.name?.trim();
+  if (!name) throw new Error("El nombre del consorcio es obligatorio");
+  const db = getDatabase();
+  const current = await db.prepare("SELECT id FROM consorcios WHERE id = ?").bind(consortiumId).first();
+  if (!current) throw new Error("Consorcio no encontrado");
+  const duplicate = await db.prepare("SELECT id FROM consorcios WHERE name = ? COLLATE NOCASE AND id <> ?")
+    .bind(name, consortiumId).first();
+  if (duplicate) throw new Error("Ya existe un consorcio con ese nombre");
+  const now = Date.now();
+  await db.batch([
+    db.prepare(`UPDATE consorcios SET name = ?, address = ?, notes = ?, updated_at = ? WHERE id = ?`)
+      .bind(name, input.address?.trim() ?? "", input.notes?.trim() ?? "", now, consortiumId),
+    db.prepare("UPDATE tasks SET building = ?, updated_at = ? WHERE consortium_id = ?")
+      .bind(name, now, consortiumId),
+  ]);
+  return loadWorkspace(identity);
+}
+
+export async function deleteConsortium(identity: AuthIdentity, consortiumId: string) {
+  await requireAdmin(identity);
+  const db = getDatabase();
+  const consortium = await db.prepare("SELECT id FROM consorcios WHERE id = ?").bind(consortiumId).first();
+  if (!consortium) throw new Error("Consorcio no encontrado");
+  await db.batch([
+    db.prepare("UPDATE tasks SET consortium_id = NULL WHERE consortium_id = ?").bind(consortiumId),
+    db.prepare("DELETE FROM consorcios WHERE id = ?").bind(consortiumId),
+  ]);
   return loadWorkspace(identity);
 }
 

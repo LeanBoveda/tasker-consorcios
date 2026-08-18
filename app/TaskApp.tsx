@@ -36,10 +36,15 @@ export default function TaskApp({ initialData }: { initialData: WorkspaceData })
   const [search, setSearch] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
   const [assigneeFilter, setAssigneeFilter] = useState("all");
+  const [buildingFilter, setBuildingFilter] = useState("all");
   const [newTaskOpen, setNewTaskOpen] = useState(false);
   const [newTaskStatus, setNewTaskStatus] = useState<TaskItem["status"]>("pending");
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const [teamOpen, setTeamOpen] = useState(false);
+  const [consortiaOpen, setConsortiaOpen] = useState(false);
+  const [consortiumDraft, setConsortiumDraft] = useState<{ id: string | null; name: string; address: string; notes: string }>({
+    id: null, name: "", address: "", notes: "",
+  });
   const [importOpen, setImportOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
@@ -54,17 +59,18 @@ export default function TaskApp({ initialData }: { initialData: WorkspaceData })
     task.status === "done" && task.updatedAt > Date.now() - 7 * 86400000
   );
   const buildings = useMemo(() =>
-    Array.from(new Set(data.tasks.map((task) => task.building).filter(Boolean))).sort(),
-  [data.tasks]);
+    Array.from(new Set([...data.consorcios.map((item) => item.name), ...data.tasks.map((task) => task.building)].filter(Boolean))).sort((a, b) => a.localeCompare(b, "es")),
+  [data.consorcios, data.tasks]);
   const visibleTasks = useMemo(() => {
     const query = search.trim().toLocaleLowerCase("es");
     return data.tasks.filter((task) => {
       if (view === "mine" && task.assigneeId !== data.currentUser.id && !(task.creatorId === data.currentUser.id && !task.assigneeId)) return false;
       if (assigneeFilter !== "all" && task.assigneeId !== assigneeFilter) return false;
+      if (buildingFilter !== "all" && task.building !== buildingFilter) return false;
       if (query && !`${task.title} ${task.description} ${task.building}`.toLocaleLowerCase("es").includes(query)) return false;
       return true;
     });
-  }, [data, view, assigneeFilter, search]);
+  }, [data, view, assigneeFilter, buildingFilter, search]);
 
   async function mutate(url: string, method: "POST" | "PATCH" | "DELETE", body: unknown, success: string) {
     setSaving(true);
@@ -93,7 +99,7 @@ export default function TaskApp({ initialData }: { initialData: WorkspaceData })
     event.preventDefault();
     const form = new FormData(event.currentTarget);
     const ok = await mutate("/api/tasks", "POST", {
-      title: form.get("title"), description: form.get("description"), building: form.get("building"),
+      title: form.get("title"), description: form.get("description"), consortiumId: form.get("consortiumId") || null,
       priority: form.get("priority"), dueDate: form.get("dueDate") || null,
       assigneeId: form.get("assigneeId") || null, status: newTaskStatus,
     }, "Tarea creada");
@@ -118,6 +124,22 @@ export default function TaskApp({ initialData }: { initialData: WorkspaceData })
     const ok = await mutate(`/api/tasks/${selectedTask.id}/comments`, "POST", { body }, "Comentario agregado");
     if (ok) event.currentTarget.reset();
   }
+  async function submitConsortium(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const url = consortiumDraft.id ? `/api/consorcios/${consortiumDraft.id}` : "/api/consorcios";
+    const method = consortiumDraft.id ? "PATCH" : "POST";
+    const success = consortiumDraft.id ? "Consorcio actualizado" : "Consorcio agregado";
+    const ok = await mutate(url, method, {
+      name: consortiumDraft.name, address: consortiumDraft.address, notes: consortiumDraft.notes,
+    }, success);
+    if (ok) setConsortiumDraft({ id: null, name: "", address: "", notes: "" });
+  }
+  async function removeConsortium(id: string, name: string) {
+    const confirmed = window.confirm(`¿Eliminar “${name}” del catálogo?\n\nLas tareas existentes conservarán el nombre del consorcio.`);
+    if (!confirmed) return;
+    const ok = await mutate(`/api/consorcios/${id}`, "DELETE", undefined, "Consorcio eliminado");
+    if (ok && consortiumDraft.id === id) setConsortiumDraft({ id: null, name: "", address: "", notes: "" });
+  }
   async function signOut() {
     await fetch("/api/auth/logout", { method: "POST" });
     window.location.href = "/login";
@@ -136,7 +158,7 @@ export default function TaskApp({ initialData }: { initialData: WorkspaceData })
           <button className={`nav-item ${view === "home" ? "active" : ""}`} onClick={() => setView("home")}><span aria-hidden="true">⌂</span>Inicio</button>
           <button className={`nav-item ${view === "mine" ? "active" : ""}`} onClick={() => setView("mine")}><span aria-hidden="true">✓</span>Mis tareas<span className="nav-count">{activeTasks.length}</span></button>
           <button className="nav-item" onClick={() => setTeamOpen(true)}><span aria-hidden="true">♙</span>Equipo</button>
-          <button className="nav-item" onClick={() => { setView("home"); setAssigneeFilter("all"); }}><span aria-hidden="true">▦</span>Consorcios</button>
+          <button className="nav-item" onClick={() => setConsortiaOpen(true)}><span aria-hidden="true">▦</span>Consorcios<span className="nav-count">{data.consorcios.length}</span></button>
           <button className="nav-item" onClick={() => setNotice("La actividad queda registrada dentro de cada tarea.")}><span aria-hidden="true">◷</span>Actividad</button>
         </nav>
         <div className="privacy-note"><span aria-hidden="true">◉</span><div><strong>Espacio privado</strong><small>Solo creador y asignado ven cada tarea.</small></div></div>
@@ -167,7 +189,7 @@ export default function TaskApp({ initialData }: { initialData: WorkspaceData })
           <div><h2>{view === "mine" ? "Mis tareas" : "Tablero de tareas"}</h2><p>{visibleTasks.length} tareas visibles · las privadas no se comparten con el resto del equipo.</p></div>
           <div className="board-actions">
             <select className="filter-button" aria-label="Filtrar por persona" value={assigneeFilter} onChange={(event) => setAssigneeFilter(event.target.value)}><option value="all">Todas las personas</option>{data.users.map((user) => <option value={user.id} key={user.id}>{user.name}</option>)}</select>
-            <select className="filter-button" aria-label="Filtrar por consorcio" onChange={(event) => setSearch(event.target.value)}><option value="">Todos los consorcios</option>{buildings.map((building) => <option value={building} key={building}>{building}</option>)}</select>
+            <select className="filter-button" aria-label="Filtrar por consorcio" value={buildingFilter} onChange={(event) => setBuildingFilter(event.target.value)}><option value="all">Todos los consorcios</option>{buildings.map((building) => <option value={building} key={building}>{building}</option>)}</select>
             <button className="view-button active" aria-label="Vista de tablero">▥</button>
           </div>
         </div>
@@ -203,7 +225,7 @@ export default function TaskApp({ initialData }: { initialData: WorkspaceData })
               <label>Título<input name="title" required autoFocus placeholder="Ej. Coordinar visita del ascensorista" /></label>
               <label>Descripción<textarea name="description" rows={3} placeholder="Agregá contexto, datos del proveedor o próximos pasos…" /></label>
               <div className="form-grid">
-                <label>Consorcio<input name="building" placeholder="Dirección o nombre" /></label><label>Fecha límite<input name="dueDate" type="date" /></label>
+                <label>Consorcio<select name="consortiumId" defaultValue=""><option value="">Sin consorcio</option>{data.consorcios.map((item) => <option value={item.id} key={item.id}>{item.name}{item.address ? ` · ${item.address}` : ""}</option>)}</select></label><label>Fecha límite<input name="dueDate" type="date" /></label>
                 <label>Prioridad<select name="priority" defaultValue="medium"><option value="low">Baja</option><option value="medium">Media</option><option value="high">Alta</option></select></label>
                 <label>Asignar a<select name="assigneeId" defaultValue=""><option value="">Solo para mí</option>{data.users.map((user) => <option value={user.id} key={user.id}>{user.name}</option>)}</select></label>
               </div>
@@ -223,6 +245,7 @@ export default function TaskApp({ initialData }: { initialData: WorkspaceData })
               <label>Estado<select value={selectedTask.status} disabled={saving} onChange={(event) => updateSelected({ status: event.target.value }, "Estado actualizado")}>{columns.map((column) => <option value={column.key} key={column.key}>{column.label}</option>)}</select></label>
               <label>Prioridad<select value={selectedTask.priority} disabled={saving || selectedTask.creatorId !== data.currentUser.id} onChange={(event) => updateSelected({ priority: event.target.value })}><option value="low">Baja</option><option value="medium">Media</option><option value="high">Alta</option></select></label>
               <label>Asignada a<select value={selectedTask.assigneeId ?? ""} disabled={saving || selectedTask.creatorId !== data.currentUser.id} onChange={(event) => updateSelected({ assigneeId: event.target.value || null }, "Asignación actualizada")}><option value="">Solo para mí</option>{data.users.map((user) => <option value={user.id} key={user.id}>{user.name}</option>)}</select></label>
+              <label>Consorcio<select value={selectedTask.consortiumId ?? ""} disabled={saving || selectedTask.creatorId !== data.currentUser.id} onChange={(event) => updateSelected({ consortiumId: event.target.value || null }, "Consorcio actualizado")}><option value="">Sin consorcio</option>{data.consorcios.map((item) => <option value={item.id} key={item.id}>{item.name}</option>)}</select></label>
               <label>Vencimiento<span className="detail-value">{dueLabel(selectedTask.dueDate)}</span></label>
             </div>
             <div className="task-context"><span>▦</span><div><small>CONSORCIO</small><strong>{selectedTask.building || "Sin consorcio asociado"}</strong></div></div>
@@ -251,6 +274,37 @@ export default function TaskApp({ initialData }: { initialData: WorkspaceData })
             <div className="team-list">{data.users.map((user) => <article className="team-row" key={user.id}><span className="avatar avatar-owner">{initials(user.name)}</span><div><strong>{user.name}</strong><span>@{user.username}</span></div><span className={`member-status ${user.status}`}>{user.role === "admin" ? "Administrador" : "Usuario"}</span></article>)}</div>
             <p className="team-help">Los usuarios se crean o actualizan desde el Excel. Cada persona ve las tareas que creó o que le asignaron.</p>
             {data.currentUser.role === "admin" && <div className="modal-actions"><button className="primary-button" onClick={() => setImportOpen(true)}>▦ Importar Excel</button></div>}
+          </section>
+        </div>
+      )}
+
+      {consortiaOpen && (
+        <div className="modal-backdrop" onMouseDown={() => setConsortiaOpen(false)}>
+          <section className="modal consortia-modal" role="dialog" aria-modal="true" aria-labelledby="consortia-title" onMouseDown={(event) => event.stopPropagation()}>
+            <div className="modal-header"><div><span className="modal-kicker">CATÁLOGO</span><h2 id="consortia-title">Consorcios administrados</h2></div><button className="close-button" onClick={() => setConsortiaOpen(false)} aria-label="Cerrar">×</button></div>
+            {data.currentUser.role === "admin" && (
+              <form className="consortium-form" onSubmit={submitConsortium}>
+                <div className="consortium-form-grid">
+                  <label>Nombre<input required value={consortiumDraft.name} onChange={(event) => setConsortiumDraft((draft) => ({ ...draft, name: event.target.value }))} placeholder="Ej. Consorcio Rivadavia 1234" /></label>
+                  <label>Dirección<input value={consortiumDraft.address} onChange={(event) => setConsortiumDraft((draft) => ({ ...draft, address: event.target.value }))} placeholder="Ej. Av. Rivadavia 1234" /></label>
+                </div>
+                <label>Notas<textarea rows={2} value={consortiumDraft.notes} onChange={(event) => setConsortiumDraft((draft) => ({ ...draft, notes: event.target.value }))} placeholder="Datos útiles o referencias internas…" /></label>
+                <div className="modal-actions">
+                  {consortiumDraft.id && <button type="button" className="secondary-button" onClick={() => setConsortiumDraft({ id: null, name: "", address: "", notes: "" })}>Cancelar edición</button>}
+                  <button className="primary-button" disabled={saving}><span aria-hidden="true">{consortiumDraft.id ? "✓" : "＋"}</span>{saving ? "Guardando…" : consortiumDraft.id ? "Guardar cambios" : "Agregar consorcio"}</button>
+                </div>
+              </form>
+            )}
+            <div className="consortium-list">
+              {data.consorcios.map((item) => (
+                <article className="consortium-row" key={item.id}>
+                  <span className="consortium-icon" aria-hidden="true">▦</span>
+                  <div><strong>{item.name}</strong><span>{item.address || "Sin dirección cargada"}</span>{item.notes && <small>{item.notes}</small>}</div>
+                  {data.currentUser.role === "admin" && <div className="consortium-actions"><button className="row-button" onClick={() => setConsortiumDraft({ id: item.id, name: item.name, address: item.address, notes: item.notes })}>Editar</button><button className="row-button danger" onClick={() => removeConsortium(item.id, item.name)}>Eliminar</button></div>}
+                </article>
+              ))}
+              {data.consorcios.length === 0 && <p className="empty-consortia">Todavía no hay consorcios. Agregá el primero para poder seleccionarlo en las tareas.</p>}
+            </div>
           </section>
         </div>
       )}

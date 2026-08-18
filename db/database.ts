@@ -34,6 +34,14 @@ async function initializeDatabase() {
       created_at INTEGER NOT NULL,
       last_seen_at INTEGER NOT NULL
     )`),
+    db.prepare(`CREATE TABLE IF NOT EXISTS consorcios (
+      id TEXT PRIMARY KEY NOT NULL,
+      name TEXT NOT NULL UNIQUE,
+      address TEXT NOT NULL DEFAULT '',
+      notes TEXT NOT NULL DEFAULT '',
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    )`),
     db.prepare(`CREATE TABLE IF NOT EXISTS tasks (
       id TEXT PRIMARY KEY NOT NULL,
       title TEXT NOT NULL,
@@ -42,6 +50,7 @@ async function initializeDatabase() {
       priority TEXT NOT NULL DEFAULT 'medium' CHECK (priority IN ('low', 'medium', 'high')),
       status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'in_progress', 'review', 'done')),
       due_date TEXT,
+      consortium_id TEXT REFERENCES consorcios(id) ON DELETE SET NULL,
       creator_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
       assignee_id TEXT REFERENCES users(id) ON DELETE SET NULL,
       created_at INTEGER NOT NULL,
@@ -74,11 +83,34 @@ async function initializeDatabase() {
     if (!columns.has(column)) await db.prepare(sql).run();
   }
 
+  const taskInfo = await db.prepare("PRAGMA table_info(tasks)").all<{ name: string }>();
+  const taskColumns = new Set((taskInfo.results ?? []).map((column) => column.name));
+  if (!taskColumns.has("consortium_id")) {
+    await db.prepare("ALTER TABLE tasks ADD COLUMN consortium_id TEXT REFERENCES consorcios(id) ON DELETE SET NULL").run();
+  }
+
+  const legacyBuildings = await db.prepare(`SELECT DISTINCT building
+    FROM tasks WHERE consortium_id IS NULL AND trim(building) <> ''`).all<{ building: string }>();
+  for (const row of legacyBuildings.results ?? []) {
+    let consortium = await db.prepare("SELECT id FROM consorcios WHERE name = ? COLLATE NOCASE")
+      .bind(row.building).first<{ id: string }>();
+    if (!consortium) {
+      const id = crypto.randomUUID();
+      const now = Date.now();
+      await db.prepare(`INSERT INTO consorcios (id, name, address, notes, created_at, updated_at)
+        VALUES (?, ?, '', '', ?, ?)`).bind(id, row.building, now, now).run();
+      consortium = { id };
+    }
+    await db.prepare("UPDATE tasks SET consortium_id = ? WHERE consortium_id IS NULL AND building = ?")
+      .bind(consortium.id, row.building).run();
+  }
+
   await db.batch([
     db.prepare("CREATE UNIQUE INDEX IF NOT EXISTS users_username_unique ON users (username)"),
     db.prepare("CREATE INDEX IF NOT EXISTS idx_sessions_user_expires ON sessions (user_id, expires_at)"),
     db.prepare("CREATE INDEX IF NOT EXISTS idx_tasks_creator_status ON tasks (creator_id, status)"),
     db.prepare("CREATE INDEX IF NOT EXISTS idx_tasks_assignee_status ON tasks (assignee_id, status)"),
+    db.prepare("CREATE INDEX IF NOT EXISTS idx_tasks_consortium_id ON tasks (consortium_id)"),
     db.prepare("CREATE INDEX IF NOT EXISTS idx_comments_task_created ON comments (task_id, created_at)"),
     db.prepare("DELETE FROM sessions WHERE expires_at <= ?").bind(Date.now()),
     db.prepare("PRAGMA optimize"),
