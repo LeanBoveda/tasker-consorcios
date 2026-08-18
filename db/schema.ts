@@ -3,14 +3,19 @@ import { index, integer, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqli
 export const users = sqliteTable("users", {
   id: text("id").primaryKey(),
   authUserId: text("auth_user_id"),
+  username: text("username"),
   email: text("email").notNull(),
   name: text("name").notNull(),
   role: text("role", { enum: ["admin", "member"] }).notNull().default("member"),
   status: text("status", { enum: ["active", "invited"] }).notNull().default("active"),
+  passwordHash: text("password_hash"),
+  passwordSalt: text("password_salt"),
+  passwordIterations: integer("password_iterations").notNull().default(210000),
   createdAt: integer("created_at").notNull(),
   lastSeenAt: integer("last_seen_at").notNull(),
 }, (table) => [
   uniqueIndex("users_auth_user_id_unique").on(table.authUserId),
+  uniqueIndex("users_username_unique").on(table.username),
   uniqueIndex("users_email_unique").on(table.email),
 ]);
 
@@ -39,4 +44,13 @@ export const comments = sqliteTable("comments", {
   createdAt: integer("created_at").notNull(),
 }, (table) => [
   index("idx_comments_task_created").on(table.taskId, table.createdAt),
+]);
+
+export const sessions = sqliteTable("sessions", {
+  id: text("id").primaryKey(),
+  userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  createdAt: integer("created_at").notNull(),
+  expiresAt: integer("expires_at").notNull(),
+}, (table) => [
+  index("idx_sessions_user_expires").on(table.userId, table.expiresAt),
 ]);

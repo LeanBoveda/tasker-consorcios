@@ -2,6 +2,7 @@
 
 import { FormEvent, useMemo, useState } from "react";
 import type { TaskItem, WorkspaceData } from "@/db/task-store";
+import UserImport from "./UserImport";
 
 const columns: Array<{ key: TaskItem["status"]; label: string; tone: string }> = [
   { key: "pending", label: "Pendientes", tone: "slate" },
@@ -39,7 +40,7 @@ export default function TaskApp({ initialData }: { initialData: WorkspaceData })
   const [newTaskStatus, setNewTaskStatus] = useState<TaskItem["status"]>("pending");
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const [teamOpen, setTeamOpen] = useState(false);
-  const [inviteOpen, setInviteOpen] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
 
@@ -106,11 +107,9 @@ export default function TaskApp({ initialData }: { initialData: WorkspaceData })
     const ok = await mutate(`/api/tasks/${selectedTask.id}/comments`, "POST", { body }, "Comentario agregado");
     if (ok) event.currentTarget.reset();
   }
-  async function submitInvite(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const form = new FormData(event.currentTarget);
-    const ok = await mutate("/api/users", "POST", { name: form.get("name"), email: form.get("email") }, "Integrante agregado al equipo");
-    if (ok) { event.currentTarget.reset(); setInviteOpen(false); }
+  async function signOut() {
+    await fetch("/api/auth/logout", { method: "POST" });
+    window.location.href = "/login";
   }
   function openNewTask(status: TaskItem["status"] = "pending") {
     setNewTaskStatus(status);
@@ -132,7 +131,7 @@ export default function TaskApp({ initialData }: { initialData: WorkspaceData })
         <div className="privacy-note"><span aria-hidden="true">◉</span><div><strong>Espacio privado</strong><small>Solo creador y asignado ven cada tarea.</small></div></div>
         <div className="sidebar-bottom">
           <button className="team-card" onClick={() => setTeamOpen(true)}><span className="status-dot" /><div><strong>Equipo</strong><span>{data.users.length} integrantes registrados</span></div></button>
-          <button className="profile-button"><span className="avatar avatar-owner">{initials(data.currentUser.name)}</span><span><strong>{data.currentUser.name}</strong><small>{data.currentUser.role === "admin" ? "Administrador principal" : "Integrante"}</small></span><span aria-hidden="true">•••</span></button>
+          <button className="profile-button" onClick={signOut} title="Cerrar sesión"><span className="avatar avatar-owner">{initials(data.currentUser.name)}</span><span><strong>{data.currentUser.name}</strong><small>@{data.currentUser.username} · {data.currentUser.role === "admin" ? "Administrador" : "Integrante"}</small></span><span className="signout-label">Salir</span></button>
         </div>
       </aside>
 
@@ -232,21 +231,14 @@ export default function TaskApp({ initialData }: { initialData: WorkspaceData })
         <div className="modal-backdrop" onMouseDown={() => setTeamOpen(false)}>
           <section className="modal team-modal" role="dialog" aria-modal="true" aria-labelledby="team-title" onMouseDown={(event) => event.stopPropagation()}>
             <div className="modal-header"><div><span className="modal-kicker">EQUIPO</span><h2 id="team-title">Personas de la administración</h2></div><button className="close-button" onClick={() => setTeamOpen(false)} aria-label="Cerrar">×</button></div>
-            <div className="team-list">{data.users.map((user) => <article className="team-row" key={user.id}><span className="avatar avatar-owner">{initials(user.name)}</span><div><strong>{user.name}</strong><span>{user.email}</span></div><span className={`member-status ${user.status}`}>{user.role === "admin" ? "Administrador" : user.status === "active" ? "Activo" : "Invitado"}</span></article>)}</div>
-            <p className="team-help">Cada integrante accede con su propia cuenta. Solo ve las tareas que creó o que le asignaron.</p>
-            {data.currentUser.role === "admin" && <div className="modal-actions"><button className="primary-button" onClick={() => setInviteOpen(true)}>＋ Agregar integrante</button></div>}
+            <div className="team-list">{data.users.map((user) => <article className="team-row" key={user.id}><span className="avatar avatar-owner">{initials(user.name)}</span><div><strong>{user.name}</strong><span>@{user.username}</span></div><span className={`member-status ${user.status}`}>{user.role === "admin" ? "Administrador" : "Usuario"}</span></article>)}</div>
+            <p className="team-help">Los usuarios se crean o actualizan desde el Excel. Cada persona ve las tareas que creó o que le asignaron.</p>
+            {data.currentUser.role === "admin" && <div className="modal-actions"><button className="primary-button" onClick={() => setImportOpen(true)}>▦ Importar Excel</button></div>}
           </section>
         </div>
       )}
 
-      {inviteOpen && (
-        <div className="modal-backdrop elevated" onMouseDown={() => setInviteOpen(false)}>
-          <section className="modal compact-modal" role="dialog" aria-modal="true" aria-labelledby="invite-title" onMouseDown={(event) => event.stopPropagation()}>
-            <div className="modal-header"><div><span className="modal-kicker">NUEVO INTEGRANTE</span><h2 id="invite-title">Agregar al equipo</h2></div><button className="close-button" onClick={() => setInviteOpen(false)} aria-label="Cerrar">×</button></div>
-            <form onSubmit={submitInvite}><label>Nombre completo<input name="name" required autoFocus /></label><label>Correo de acceso<input name="email" type="email" required /></label><div className="modal-actions"><button type="button" className="secondary-button" onClick={() => setInviteOpen(false)}>Cancelar</button><button className="primary-button" disabled={saving}>{saving ? "Guardando…" : "Agregar"}</button></div></form>
-          </section>
-        </div>
-      )}
+      {importOpen && <UserImport onClose={() => setImportOpen(false)} onImported={(workspace) => { setData(workspace); setNotice("Usuarios importados"); }} />}
       {notice && <div className="toast" role="status">{notice}</div>}
     </main>
   );
