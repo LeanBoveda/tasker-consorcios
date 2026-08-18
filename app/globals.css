@@ -260,55 +260,55 @@ button { font: inherit; }
 .import-row.heading { color: #7c8882; background: #fbfcfb; font-weight: 750; }
 
 /* Legibilidad: un escalón más grande para textos operativos y formularios. */
-.nav-label { font-size: 11px; }
-.nav-count { font-size: 12px; }
-.team-card strong, .profile-button strong { font-size: 13px; }
-.team-card div span, .profile-button small { font-size: 11px; }
-.avatar { font-size: 10px; }
-.eyebrow { font-size: 12px; }
-.subtitle { font-size: 14px; }
-.primary-button { font-size: 13px; }
-.summary-card div span { font-size: 12px; }
-.summary-trend { font-size: 11px; }
-.board-heading p { font-size: 12px; }
-.filter-button { font-size: 12px; }
-.column-header h3 { font-size: 13px; }
-.column-count { font-size: 11px; }
-.priority { font-size: 10px; }
-.task-card h4 { font-size: 13px; }
-.task-card p, .due, .task-meta { font-size: 11px; }
-.add-task { font-size: 12px; }
-.privacy-note strong { font-size: 12px; }
-.privacy-note small { font-size: 11px; }
-.visibility-pill { font-size: 10px; }
-.empty-column { font-size: 11px; }
-.modal-kicker { font-size: 11px; }
-.modal label, .detail-grid label { font-size: 12px; }
-.modal input, .modal textarea, .modal select, .detail-grid select, .comment-form textarea { font-size: 13px; }
-.privacy-banner p { font-size: 12px; }
-.secondary-button { font-size: 12px; }
-.drawer-description { font-size: 13px; }
-.detail-value { font-size: 13px; }
-.task-context small { font-size: 10px; }
-.task-context strong { font-size: 13px; }
-.comments-title span { font-size: 11px; }
-.comment strong { font-size: 12px; }
-.comment time { font-size: 10px; }
-.comment div > span, .no-comments { font-size: 12px; }
-.delete-task-zone strong, .danger-button { font-size: 12px; }
-.delete-task-zone span { font-size: 11px; }
-.team-row strong, .consortium-row strong { font-size: 13px; }
-.team-row div span, .consortium-row div > span { font-size: 11px; }
-.member-status, .consortium-row small { font-size: 10px; }
-.team-help, .row-button { font-size: 11px; }
-.empty-consortia, .toast { font-size: 12px; }
-.signout-label { font-size: 11px; }
-.login-copy p, .login-form input { font-size: 14px; }
-.login-form label, .login-button { font-size: 13px; }
-.login-error, .login-help { font-size: 11px; }
-.import-intro { font-size: 13px; }
-.file-button, .template-button, .filename, .import-error, .import-preview-head { font-size: 12px; }
-.import-row span { font-size: 11px; }
+.nav-label { font-size: 12px; }
+.nav-count { font-size: 13px; }
+.team-card strong, .profile-button strong { font-size: 14px; }
+.team-card div span, .profile-button small { font-size: 12px; }
+.avatar { font-size: 11px; }
+.eyebrow { font-size: 13px; }
+.subtitle { font-size: 15px; }
+.primary-button { font-size: 14px; }
+.summary-card div span { font-size: 13px; }
+.summary-trend { font-size: 12px; }
+.board-heading p { font-size: 13px; }
+.filter-button { font-size: 13px; }
+.column-header h3 { font-size: 14px; }
+.column-count { font-size: 12px; }
+.priority { font-size: 11px; }
+.task-card h4 { font-size: 14px; }
+.task-card p, .due, .task-meta { font-size: 12px; }
+.add-task { font-size: 13px; }
+.privacy-note strong { font-size: 13px; }
+.privacy-note small { font-size: 12px; }
+.visibility-pill { font-size: 11px; }
+.empty-column { font-size: 12px; }
+.modal-kicker { font-size: 12px; }
+.modal label, .detail-grid label { font-size: 13px; }
+.modal input, .modal textarea, .modal select, .detail-grid select, .comment-form textarea { font-size: 14px; }
+.privacy-banner p { font-size: 13px; }
+.secondary-button { font-size: 13px; }
+.drawer-description { font-size: 14px; }
+.detail-value { font-size: 14px; }
+.task-context small { font-size: 11px; }
+.task-context strong { font-size: 14px; }
+.comments-title span { font-size: 12px; }
+.comment strong { font-size: 13px; }
+.comment time { font-size: 11px; }
+.comment div > span, .no-comments { font-size: 13px; }
+.delete-task-zone strong, .danger-button { font-size: 13px; }
+.delete-task-zone span { font-size: 12px; }
+.team-row strong, .consortium-row strong { font-size: 14px; }
+.team-row div span, .consortium-row div > span { font-size: 12px; }
+.member-status, .consortium-row small { font-size: 11px; }
+.team-help, .row-button { font-size: 12px; }
+.empty-consortia, .toast { font-size: 13px; }
+.signout-label { font-size: 12px; }
+.login-copy p, .login-form input { font-size: 15px; }
+.login-form label, .login-button { font-size: 14px; }
+.login-error, .login-help { font-size: 12px; }
+.import-intro { font-size: 14px; }
+.file-button, .template-button, .filename, .import-error, .import-preview-head { font-size: 13px; }
+.import-row span { font-size: 12px; }
 
 @keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
 @keyframes rise-in { from { opacity: 0; transform: translateY(7px); } to { opacity: 1; transform: translateY(0); } }
@@ -347,7 +347,7 @@ button { font: inherit; }
   .search-input { position: absolute; top: 68px; right: 16px; width: calc(100% - 102px); }
   .modal { padding: 20px; }
   .form-grid, .detail-grid, .consortium-form-grid { grid-template-columns: 1fr; }
-  .modal .primary-button { font-size: 12px; }
+  .modal .primary-button { font-size: 13px; }
   .consortium-row { grid-template-columns: auto minmax(0,1fr); }
   .consortium-actions { grid-column: 1 / -1; justify-content: flex-end; }
   .import-actions { align-items: stretch; flex-direction: column; }
