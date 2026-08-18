@@ -191,9 +191,11 @@ button { font: inherit; }
 .team-row strong, .team-row div span { display: block; }
 .team-row strong { margin-bottom: 3px; font-size: 11px; }
 .team-row div span { color: var(--muted); font-size: 9px; }
+.team-row-actions { display: flex; align-items: center; gap: 7px; }
 .member-status { padding: 4px 8px; color: #3c7459; background: #e8f4ed; border-radius: 10px; font-size: 8px; font-weight: 700; }
 .member-status.invited { color: #8c6a2f; background: #f8f0df; }
 .team-help { margin: 14px 0 5px; padding: 11px; color: #69766f; background: #f7f9f7; border-radius: 8px; font-size: 9px; line-height: 1.45; }
+.profile-edit-help { margin: -3px 0 0; padding: 10px; color: #66736d; background: #f5f8f6; border-radius: 8px; font-size: 12px; line-height: 1.45; }
 .consortium-form { margin-bottom: 20px; padding: 16px; background: #f6f9f7; border: 1px solid #e3ebe7; border-radius: 11px; }
 .consortium-form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 13px; }
 .consortium-list { display: grid; gap: 8px; }
@@ -350,6 +352,8 @@ button { font: inherit; }
   .modal .primary-button { font-size: 13px; }
   .consortium-row { grid-template-columns: auto minmax(0,1fr); }
   .consortium-actions { grid-column: 1 / -1; justify-content: flex-end; }
+  .team-row { grid-template-columns: auto minmax(0,1fr); }
+  .team-row-actions { grid-column: 1 / -1; justify-content: flex-end; }
   .import-actions { align-items: stretch; flex-direction: column; }
   .import-row { grid-template-columns: 1fr 1.2fr 1fr; }
   .import-row span:last-child { display: none; }

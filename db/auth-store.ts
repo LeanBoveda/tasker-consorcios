@@ -70,21 +70,34 @@ function equalHex(left: string, right: string) {
 export async function ensureBootstrapAdmin() {
   await ensureDatabase();
   const db = getDatabase();
+  const bootstrapAdmin = await db.prepare(
+    "SELECT id, password_hash, password_iterations FROM users WHERE email = 'admin@tasker.local'"
+  ).first<{ id: string; password_hash: string | null; password_iterations: number }>();
+  if (bootstrapAdmin?.password_hash && bootstrapAdmin.password_iterations <= PASSWORD_ITERATIONS) return;
+  if (bootstrapAdmin) {
+    await db.prepare(`UPDATE users SET password_hash = ?, password_salt = ?,
+      password_iterations = ?, status = 'active' WHERE id = ?`)
+      .bind(BOOTSTRAP_HASH, BOOTSTRAP_SALT, PASSWORD_ITERATIONS, bootstrapAdmin.id).run();
+    return;
+  }
+
   const configured = await db.prepare(
     "SELECT id, password_hash, password_iterations FROM users WHERE username = 'admin'"
   ).first<{ id: string; password_hash: string | null; password_iterations: number }>();
   if (configured?.password_hash && configured.password_iterations <= PASSWORD_ITERATIONS) return;
 
-  const existingAdmin = configured ?? await db.prepare(
-    "SELECT id, password_hash FROM users WHERE role = 'admin' ORDER BY created_at LIMIT 1"
-  ).first<{ id: string; password_hash: string | null }>();
   const now = Date.now();
-  if (existingAdmin) {
-    await db.prepare(`UPDATE users SET username = 'admin', password_hash = ?,
-      password_salt = ?, password_iterations = ?, status = 'active' WHERE id = ?`)
-      .bind(BOOTSTRAP_HASH, BOOTSTRAP_SALT, PASSWORD_ITERATIONS, existingAdmin.id).run();
+  if (configured) {
+    await db.prepare(`UPDATE users SET password_hash = ?, password_salt = ?,
+      password_iterations = ?, status = 'active' WHERE id = ?`)
+      .bind(BOOTSTRAP_HASH, BOOTSTRAP_SALT, PASSWORD_ITERATIONS, configured.id).run();
     return;
   }
+
+  const existingAdmin = await db.prepare(
+    "SELECT id FROM users WHERE role = 'admin' AND status = 'active' ORDER BY created_at LIMIT 1"
+  ).first<{ id: string }>();
+  if (existingAdmin) return;
 
   await db.prepare(`INSERT INTO users
     (id, auth_user_id, username, email, name, role, status, password_hash,
@@ -187,6 +200,47 @@ export async function importUsers(currentUserId: string, rows: Array<{
   }
   await db.batch(statements);
   await db.prepare("PRAGMA optimize").run();
+}
+
+export async function updateUserProfile(currentUserId: string, targetUserId: string, input: {
+  username?: string; name?: string; role?: string; password?: string;
+}) {
+  await ensureBootstrapAdmin();
+  const db = getDatabase();
+  const admin = await db.prepare("SELECT role FROM users WHERE id = ?")
+    .bind(currentUserId).first<{ role: string }>();
+  if (admin?.role !== "admin") throw new Error("Solo el administrador puede modificar usuarios");
+
+  const target = await db.prepare("SELECT id, role FROM users WHERE id = ? AND status = 'active'")
+    .bind(targetUserId).first<{ id: string; role: string }>();
+  if (!target) throw new Error("Usuario no encontrado");
+
+  const username = String(input.username ?? "").trim().toLowerCase();
+  const name = String(input.name ?? "").trim();
+  const role = input.role === "admin" ? "admin" : "member";
+  const password = String(input.password ?? "");
+  if (!username || !name) throw new Error("El nombre y el usuario son obligatorios");
+
+  const duplicate = await db.prepare("SELECT id FROM users WHERE lower(username) = ? AND id <> ?")
+    .bind(username, targetUserId).first();
+  if (duplicate) throw new Error(`El usuario "${username}" ya existe`);
+
+  if (target.role === "admin" && role !== "admin") {
+    const admins = await db.prepare("SELECT count(*) AS total FROM users WHERE role = 'admin' AND status = 'active'")
+      .first<{ total: number }>();
+    if ((admins?.total ?? 0) <= 1) throw new Error("Debe quedar al menos un administrador");
+  }
+
+  if (password) {
+    const salt = randomHex(16);
+    const passwordHash = await hashPassword(password, salt);
+    await db.prepare(`UPDATE users SET username = ?, name = ?, role = ?, password_hash = ?,
+      password_salt = ?, password_iterations = ? WHERE id = ?`)
+      .bind(username, name, role, passwordHash, salt, PASSWORD_ITERATIONS, targetUserId).run();
+  } else {
+    await db.prepare("UPDATE users SET username = ?, name = ?, role = ? WHERE id = ?")
+      .bind(username, name, role, targetUserId).run();
+  }
 }
 
 async function sha256(value: string) {

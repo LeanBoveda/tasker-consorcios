@@ -41,6 +41,9 @@ export default function TaskApp({ initialData }: { initialData: WorkspaceData })
   const [newTaskStatus, setNewTaskStatus] = useState<TaskItem["status"]>("pending");
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const [teamOpen, setTeamOpen] = useState(false);
+  const [userDraft, setUserDraft] = useState<{ id: string | null; name: string; username: string; role: "admin" | "member"; password: string }>({
+    id: null, name: "", username: "", role: "member", password: "",
+  });
   const [consortiaOpen, setConsortiaOpen] = useState(false);
   const [consortiumDraft, setConsortiumDraft] = useState<{ id: string | null; name: string; address: string; notes: string }>({
     id: null, name: "", address: "", notes: "",
@@ -139,6 +142,14 @@ export default function TaskApp({ initialData }: { initialData: WorkspaceData })
     if (!confirmed) return;
     const ok = await mutate(`/api/consorcios/${id}`, "DELETE", undefined, "Consorcio eliminado");
     if (ok && consortiumDraft.id === id) setConsortiumDraft({ id: null, name: "", address: "", notes: "" });
+  }
+  async function submitUserProfile(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!userDraft.id) return;
+    const ok = await mutate(`/api/users/${userDraft.id}`, "PATCH", {
+      name: userDraft.name, username: userDraft.username, role: userDraft.role, password: userDraft.password,
+    }, "Perfil actualizado");
+    if (ok) setUserDraft({ id: null, name: "", username: "", role: "member", password: "" });
   }
   async function signOut() {
     await fetch("/api/auth/logout", { method: "POST" });
@@ -271,9 +282,25 @@ export default function TaskApp({ initialData }: { initialData: WorkspaceData })
         <div className="modal-backdrop" onMouseDown={() => setTeamOpen(false)}>
           <section className="modal team-modal" role="dialog" aria-modal="true" aria-labelledby="team-title" onMouseDown={(event) => event.stopPropagation()}>
             <div className="modal-header"><div><span className="modal-kicker">EQUIPO</span><h2 id="team-title">Personas de la administración</h2></div><button className="close-button" onClick={() => setTeamOpen(false)} aria-label="Cerrar">×</button></div>
-            <div className="team-list">{data.users.map((user) => <article className="team-row" key={user.id}><span className="avatar avatar-owner">{initials(user.name)}</span><div><strong>{user.name}</strong><span>@{user.username}</span></div><span className={`member-status ${user.status}`}>{user.role === "admin" ? "Administrador" : "Usuario"}</span></article>)}</div>
-            <p className="team-help">Los usuarios se crean o actualizan desde el Excel. Cada persona ve las tareas que creó o que le asignaron.</p>
+            <div className="team-list">{data.users.map((user) => <article className="team-row" key={user.id}><span className="avatar avatar-owner">{initials(user.name)}</span><div><strong>{user.name}</strong><span>@{user.username}</span></div><div className="team-row-actions"><span className={`member-status ${user.status}`}>{user.role === "admin" ? "Administrador" : "Usuario"}</span>{data.currentUser.role === "admin" && <button className="row-button" onClick={() => setUserDraft({ id: user.id, name: user.name, username: user.username, role: user.role, password: "" })}>Editar</button>}</div></article>)}</div>
+            <p className="team-help">Podés editar cada perfil desde este panel. Usá el Excel cuando necesites crear o actualizar varios usuarios juntos.</p>
             {data.currentUser.role === "admin" && <div className="modal-actions"><button className="primary-button" onClick={() => setImportOpen(true)}>▦ Importar Excel</button></div>}
+          </section>
+        </div>
+      )}
+
+      {userDraft.id && (
+        <div className="modal-backdrop elevated" onMouseDown={() => setUserDraft({ id: null, name: "", username: "", role: "member", password: "" })}>
+          <section className="modal compact-modal profile-edit-modal" role="dialog" aria-modal="true" aria-labelledby="edit-user-title" onMouseDown={(event) => event.stopPropagation()}>
+            <div className="modal-header"><div><span className="modal-kicker">EDITAR PERFIL</span><h2 id="edit-user-title">Datos del usuario</h2></div><button className="close-button" onClick={() => setUserDraft({ id: null, name: "", username: "", role: "member", password: "" })} aria-label="Cerrar">×</button></div>
+            <form onSubmit={submitUserProfile}>
+              <label>Nombre<input required autoFocus value={userDraft.name} onChange={(event) => setUserDraft((draft) => ({ ...draft, name: event.target.value }))} /></label>
+              <label>Usuario<input required value={userDraft.username} onChange={(event) => setUserDraft((draft) => ({ ...draft, username: event.target.value }))} /></label>
+              <label>Rol<select value={userDraft.role} onChange={(event) => setUserDraft((draft) => ({ ...draft, role: event.target.value as "admin" | "member" }))}><option value="member">Usuario</option><option value="admin">Administrador</option></select></label>
+              <label>Nueva contraseña<input type="text" value={userDraft.password} onChange={(event) => setUserDraft((draft) => ({ ...draft, password: event.target.value }))} placeholder="Dejar vacío para mantener la actual" /></label>
+              <p className="profile-edit-help">Si no escribís una contraseña nueva, la contraseña actual no cambia.</p>
+              <div className="modal-actions"><button type="button" className="secondary-button" onClick={() => setUserDraft({ id: null, name: "", username: "", role: "member", password: "" })}>Cancelar</button><button className="primary-button" disabled={saving}><span aria-hidden="true">✓</span>{saving ? "Guardando…" : "Guardar cambios"}</button></div>
+            </form>
           </section>
         </div>
       )}
