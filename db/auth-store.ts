@@ -243,6 +243,30 @@ export async function updateUserProfile(currentUserId: string, targetUserId: str
   }
 }
 
+export async function deleteUserProfile(currentUserId: string, targetUserId: string) {
+  await ensureBootstrapAdmin();
+  const db = getDatabase();
+  const admin = await db.prepare("SELECT role FROM users WHERE id = ? AND status = 'active'")
+    .bind(currentUserId).first<{ role: string }>();
+  if (admin?.role !== "admin") throw new Error("Solo el administrador puede eliminar usuarios");
+  if (currentUserId === targetUserId) throw new Error("No podés eliminar tu propio usuario");
+
+  const target = await db.prepare("SELECT id, role FROM users WHERE id = ? AND status = 'active'")
+    .bind(targetUserId).first<{ id: string; role: string }>();
+  if (!target) throw new Error("Usuario no encontrado");
+
+  if (target.role === "admin") {
+    const admins = await db.prepare("SELECT count(*) AS total FROM users WHERE role = 'admin' AND status = 'active'")
+      .first<{ total: number }>();
+    if ((admins?.total ?? 0) <= 1) throw new Error("Debe quedar al menos un administrador");
+  }
+
+  await db.batch([
+    db.prepare("UPDATE users SET status = 'invited' WHERE id = ?").bind(targetUserId),
+    db.prepare("DELETE FROM sessions WHERE user_id = ?").bind(targetUserId),
+  ]);
+}
+
 async function sha256(value: string) {
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
   return toHex(new Uint8Array(digest));

@@ -151,6 +151,11 @@ export default function TaskApp({ initialData }: { initialData: WorkspaceData })
     }, "Perfil actualizado");
     if (ok) setUserDraft({ id: null, name: "", username: "", role: "member", password: "" });
   }
+  async function removeUser(id: string, name: string) {
+    if (!window.confirm(`¿Eliminar el perfil de ${name}?\n\nYa no podrá iniciar sesión. Sus tareas y comentarios se conservarán.`)) return;
+    const ok = await mutate(`/api/users/${id}`, "DELETE", undefined, "Usuario eliminado");
+    if (ok && userDraft.id === id) setUserDraft({ id: null, name: "", username: "", role: "member", password: "" });
+  }
   async function signOut() {
     await fetch("/api/auth/logout", { method: "POST" });
     window.location.href = "/login";
@@ -282,8 +287,8 @@ export default function TaskApp({ initialData }: { initialData: WorkspaceData })
         <div className="modal-backdrop" onMouseDown={() => setTeamOpen(false)}>
           <section className="modal team-modal" role="dialog" aria-modal="true" aria-labelledby="team-title" onMouseDown={(event) => event.stopPropagation()}>
             <div className="modal-header"><div><span className="modal-kicker">EQUIPO</span><h2 id="team-title">Personas de la administración</h2></div><button className="close-button" onClick={() => setTeamOpen(false)} aria-label="Cerrar">×</button></div>
-            <div className="team-list">{data.users.map((user) => <article className="team-row" key={user.id}><span className="avatar avatar-owner">{initials(user.name)}</span><div><strong>{user.name}</strong><span>@{user.username}</span></div><div className="team-row-actions"><span className={`member-status ${user.status}`}>{user.role === "admin" ? "Administrador" : "Usuario"}</span>{data.currentUser.role === "admin" && <button className="row-button" onClick={() => setUserDraft({ id: user.id, name: user.name, username: user.username, role: user.role, password: "" })}>Editar</button>}</div></article>)}</div>
-            <p className="team-help">Podés editar cada perfil desde este panel. Usá el Excel cuando necesites crear o actualizar varios usuarios juntos.</p>
+            <div className="team-list">{data.users.map((user) => <article className="team-row" key={user.id}><span className="avatar avatar-owner">{initials(user.name)}</span><div><strong>{user.name}</strong><span>@{user.username}</span></div><div className="team-row-actions"><span className={`member-status ${user.status}`}>{user.role === "admin" ? "Administrador" : "Usuario"}</span>{data.currentUser.role === "admin" && <><button className="row-button" onClick={() => setUserDraft({ id: user.id, name: user.name, username: user.username, role: user.role, password: "" })}>Editar</button>{user.id !== data.currentUser.id && <button className="row-button danger" onClick={() => removeUser(user.id, user.name)}>Eliminar</button>}</>}</div></article>)}</div>
+            <p className="team-help">Podés editar o eliminar perfiles desde este panel. Usá el Excel cuando necesites crear o actualizar varios usuarios juntos.</p>
             {data.currentUser.role === "admin" && <div className="modal-actions"><button className="primary-button" onClick={() => setImportOpen(true)}>▦ Importar Excel</button></div>}
           </section>
         </div>
