@@ -37,7 +37,26 @@ export type TaskItem = {
   updatedAt: number;
   comments: TaskComment[];
 };
-export type WorkspaceData = { currentUser: AppUser; users: AppUser[]; consorcios: ConsortiumItem[]; tasks: TaskItem[] };
+export type ClaimItem = {
+  id: string;
+  source: "email";
+  isTest: boolean;
+  senderName: string;
+  senderEmail: string;
+  subject: string;
+  body: string;
+  category: "ascensor" | "agua" | "gas" | "electricidad" | "seguridad" | "limpieza" | "convivencia" | "administracion" | "mantenimiento" | "otro";
+  priority: "low" | "medium" | "high";
+  status: "new" | "assigned" | "in_progress" | "waiting" | "resolved" | "closed";
+  consortiumId: string | null;
+  consortiumName: string | null;
+  taskId: string | null;
+  assignedToId: string | null;
+  assignedToName: string | null;
+  createdAt: number;
+  updatedAt: number;
+};
+export type WorkspaceData = { currentUser: AppUser; users: AppUser[]; consorcios: ConsortiumItem[]; tasks: TaskItem[]; claims: ClaimItem[] };
 
 type TaskRow = {
   id: string; title: string; description: string; building: string;
@@ -49,6 +68,14 @@ type TaskRow = {
 type CommentRow = {
   id: string; task_id: string; body: string; created_at: number;
   author_id: string; author_name: string;
+};
+type ClaimRow = {
+  id: string; source: ClaimItem["source"]; is_test: number; sender_name: string;
+  sender_email: string; subject: string; body: string; category: ClaimItem["category"];
+  priority: ClaimItem["priority"]; status: ClaimItem["status"];
+  consortium_id: string | null; consortium_name: string | null; task_id: string | null;
+  assigned_to_id: string | null; assigned_to_name: string | null;
+  created_at: number; updated_at: number;
 };
 
 async function currentUser(identity: AuthIdentity): Promise<AppUser> {
@@ -83,6 +110,25 @@ export async function loadWorkspace(identity: AuthIdentity): Promise<WorkspaceDa
     .bind(user.id, user.id).all<TaskRow>();
 
   const taskRows = tasksResult.results ?? [];
+  const claimsResult = user.role === "admin"
+    ? await db.prepare(`SELECT r.id, r.source, r.is_test, r.sender_name, r.sender_email,
+        r.subject, r.body, r.category, r.priority, r.status, r.consortium_id,
+        c.name AS consortium_name, r.task_id, r.assigned_to_id,
+        assignee.name AS assigned_to_name, r.created_at, r.updated_at
+      FROM claims r
+      LEFT JOIN consorcios c ON c.id = r.consortium_id
+      LEFT JOIN users assignee ON assignee.id = r.assigned_to_id
+      ORDER BY CASE r.status WHEN 'new' THEN 0 WHEN 'assigned' THEN 1 WHEN 'in_progress' THEN 2 WHEN 'waiting' THEN 3 ELSE 4 END,
+        r.created_at DESC`).all<ClaimRow>()
+    : await db.prepare(`SELECT r.id, r.source, r.is_test, r.sender_name, r.sender_email,
+        r.subject, r.body, r.category, r.priority, r.status, r.consortium_id,
+        c.name AS consortium_name, r.task_id, r.assigned_to_id,
+        assignee.name AS assigned_to_name, r.created_at, r.updated_at
+      FROM claims r
+      LEFT JOIN consorcios c ON c.id = r.consortium_id
+      LEFT JOIN users assignee ON assignee.id = r.assigned_to_id
+      WHERE r.assigned_to_id = ?
+      ORDER BY r.created_at DESC`).bind(user.id).all<ClaimRow>();
   let comments: CommentRow[] = [];
   if (taskRows.length) {
     const placeholders = taskRows.map(() => "?").join(",");
@@ -121,7 +167,93 @@ export async function loadWorkspace(identity: AuthIdentity): Promise<WorkspaceDa
         authorName: comment.author_name,
       })),
     })),
+    claims: (claimsResult.results ?? []).map((claim) => ({
+      id: claim.id,
+      source: claim.source,
+      isTest: Boolean(claim.is_test),
+      senderName: claim.sender_name,
+      senderEmail: claim.sender_email,
+      subject: claim.subject,
+      body: claim.body,
+      category: claim.category,
+      priority: claim.priority,
+      status: claim.status,
+      consortiumId: claim.consortium_id,
+      consortiumName: claim.consortium_name,
+      taskId: claim.task_id,
+      assignedToId: claim.assigned_to_id,
+      assignedToName: claim.assigned_to_name,
+      createdAt: claim.created_at,
+      updatedAt: claim.updated_at,
+    })),
   };
+}
+
+function classifyEmail(subject: string, body: string): Pick<ClaimItem, "category" | "priority"> {
+  const text = `${subject} ${body}`.toLocaleLowerCase("es");
+  const categories: Array<{ category: ClaimItem["category"]; words: string[] }> = [
+    { category: "ascensor", words: ["ascensor", "elevador", "atrapad"] },
+    { category: "gas", words: ["gas", "olor extraño", "olor extrano"] },
+    { category: "agua", words: ["agua", "caño", "cano", "pérdida", "perdida", "inund"] },
+    { category: "electricidad", words: ["luz", "eléctric", "electric", "cortocircuito", "disyuntor"] },
+    { category: "seguridad", words: ["robo", "puerta", "portón", "porton", "cámara", "camara", "matafuego"] },
+    { category: "limpieza", words: ["limpieza", "sucio", "basura"] },
+    { category: "convivencia", words: ["ruido", "vecino", "molest", "reglamento"] },
+    { category: "administracion", words: ["expensa", "pago", "liquidación", "liquidacion", "recibo"] },
+    { category: "mantenimiento", words: ["repar", "mantenimiento", "humedad", "pared", "techo"] },
+  ];
+  const category = categories.find((rule) => rule.words.some((word) => text.includes(word)))?.category ?? "otro";
+  const urgentWords = ["urgente", "persona atrapada", "olor a gas", "incendio", "humo", "inundación", "inundacion", "sin agua", "sin luz", "cortocircuito"];
+  const lowWords = ["consulta", "información", "informacion", "cuando puedan", "sin apuro"];
+  const priority = urgentWords.some((word) => text.includes(word))
+    ? "high"
+    : lowWords.some((word) => text.includes(word)) ? "low" : "medium";
+  return { category, priority };
+}
+
+export async function createEmailClaimTest(identity: AuthIdentity, input: {
+  senderName?: string; senderEmail?: string; subject?: string; body?: string; consortiumId?: string | null;
+}) {
+  const user = await currentUser(identity);
+  if (user.role !== "admin") throw new Error("Solo el administrador puede ejecutar la prueba de correo");
+  const senderEmail = input.senderEmail?.trim().toLocaleLowerCase("es") ?? "";
+  const subject = input.subject?.trim() ?? "";
+  const body = input.body?.trim() ?? "";
+  if (!senderEmail || !senderEmail.includes("@")) throw new Error("Ingresá un correo del remitente válido");
+  if (!subject) throw new Error("El asunto es obligatorio");
+  if (!body) throw new Error("El mensaje es obligatorio");
+
+  const db = getDatabase();
+  let building = "";
+  if (input.consortiumId) {
+    const consortium = await db.prepare("SELECT name FROM consorcios WHERE id = ?")
+      .bind(input.consortiumId).first<{ name: string }>();
+    if (!consortium) throw new Error("El consorcio seleccionado no existe");
+    building = consortium.name;
+  }
+
+  const classification = classifyEmail(subject, body);
+  const claimId = crypto.randomUUID();
+  const taskId = crypto.randomUUID();
+  const now = Date.now();
+  const senderName = input.senderName?.trim() || "Remitente sin nombre";
+  const taskDescription = `Correo de prueba recibido de ${senderName} <${senderEmail}>\n\n${body}\n\nReclamo ${claimId.slice(0, 8)} · clasificación automática de prueba.`;
+
+  await db.batch([
+    db.prepare(`INSERT INTO tasks
+      (id, title, description, building, priority, status, due_date, consortium_id, creator_id, assignee_id, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, 'pending', NULL, ?, ?, ?, ?, ?)`)
+      .bind(taskId, subject, taskDescription, building, classification.priority,
+        input.consortiumId || null, user.id, user.id, now, now),
+    db.prepare(`INSERT INTO claims
+      (id, source, is_test, external_id, sender_name, sender_email, subject, body, category, priority, status,
+       consortium_id, task_id, created_by_id, assigned_to_id, created_at, updated_at)
+      VALUES (?, 'email', 1, ?, ?, ?, ?, ?, ?, ?, 'assigned', ?, ?, ?, ?, ?, ?)`)
+      .bind(claimId, `test-email:${claimId}`, senderName, senderEmail, subject, body,
+        classification.category, classification.priority, input.consortiumId || null,
+        taskId, user.id, user.id, now, now),
+  ]);
+  return loadWorkspace(identity);
 }
 
 export async function createTask(identity: AuthIdentity, input: {

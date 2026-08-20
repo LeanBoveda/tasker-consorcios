@@ -69,6 +69,25 @@ async function initializeDatabase() {
       created_at INTEGER NOT NULL,
       expires_at INTEGER NOT NULL
     )`),
+    db.prepare(`CREATE TABLE IF NOT EXISTS claims (
+      id TEXT PRIMARY KEY NOT NULL,
+      source TEXT NOT NULL DEFAULT 'email' CHECK (source IN ('email')),
+      is_test INTEGER NOT NULL DEFAULT 1,
+      external_id TEXT NOT NULL UNIQUE,
+      sender_name TEXT NOT NULL DEFAULT '',
+      sender_email TEXT NOT NULL,
+      subject TEXT NOT NULL,
+      body TEXT NOT NULL,
+      category TEXT NOT NULL DEFAULT 'otro' CHECK (category IN ('ascensor', 'agua', 'gas', 'electricidad', 'seguridad', 'limpieza', 'convivencia', 'administracion', 'mantenimiento', 'otro')),
+      priority TEXT NOT NULL DEFAULT 'medium' CHECK (priority IN ('low', 'medium', 'high')),
+      status TEXT NOT NULL DEFAULT 'new' CHECK (status IN ('new', 'assigned', 'in_progress', 'waiting', 'resolved', 'closed')),
+      consortium_id TEXT REFERENCES consorcios(id) ON DELETE SET NULL,
+      task_id TEXT REFERENCES tasks(id) ON DELETE SET NULL,
+      created_by_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+      assigned_to_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    )`),
   ]);
 
   const info = await db.prepare("PRAGMA table_info(users)").all<{ name: string }>();
@@ -112,6 +131,10 @@ async function initializeDatabase() {
     db.prepare("CREATE INDEX IF NOT EXISTS idx_tasks_assignee_status ON tasks (assignee_id, status)"),
     db.prepare("CREATE INDEX IF NOT EXISTS idx_tasks_consortium_id ON tasks (consortium_id)"),
     db.prepare("CREATE INDEX IF NOT EXISTS idx_comments_task_created ON comments (task_id, created_at)"),
+    db.prepare("CREATE UNIQUE INDEX IF NOT EXISTS claims_external_id_unique ON claims (external_id)"),
+    db.prepare("CREATE INDEX IF NOT EXISTS idx_claims_status_created ON claims (status, created_at)"),
+    db.prepare("CREATE INDEX IF NOT EXISTS idx_claims_consortium_id ON claims (consortium_id)"),
+    db.prepare("CREATE INDEX IF NOT EXISTS idx_claims_assigned_to_id ON claims (assigned_to_id)"),
     db.prepare("DELETE FROM sessions WHERE expires_at <= ?").bind(Date.now()),
     db.prepare("PRAGMA optimize"),
   ]);

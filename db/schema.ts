@@ -59,6 +59,31 @@ export const comments = sqliteTable("comments", {
   index("idx_comments_task_created").on(table.taskId, table.createdAt),
 ]);
 
+export const claims = sqliteTable("claims", {
+  id: text("id").primaryKey(),
+  source: text("source", { enum: ["email"] }).notNull().default("email"),
+  isTest: integer("is_test", { mode: "boolean" }).notNull().default(true),
+  externalId: text("external_id").notNull(),
+  senderName: text("sender_name").notNull().default(""),
+  senderEmail: text("sender_email").notNull(),
+  subject: text("subject").notNull(),
+  body: text("body").notNull(),
+  category: text("category", { enum: ["ascensor", "agua", "gas", "electricidad", "seguridad", "limpieza", "convivencia", "administracion", "mantenimiento", "otro"] }).notNull().default("otro"),
+  priority: text("priority", { enum: ["low", "medium", "high"] }).notNull().default("medium"),
+  status: text("status", { enum: ["new", "assigned", "in_progress", "waiting", "resolved", "closed"] }).notNull().default("new"),
+  consortiumId: text("consortium_id").references(() => consorcios.id, { onDelete: "set null" }),
+  taskId: text("task_id").references(() => tasks.id, { onDelete: "set null" }),
+  createdById: text("created_by_id").references(() => users.id, { onDelete: "set null" }),
+  assignedToId: text("assigned_to_id").references(() => users.id, { onDelete: "set null" }),
+  createdAt: integer("created_at").notNull(),
+  updatedAt: integer("updated_at").notNull(),
+}, (table) => [
+  uniqueIndex("claims_external_id_unique").on(table.externalId),
+  index("idx_claims_status_created").on(table.status, table.createdAt),
+  index("idx_claims_consortium_id").on(table.consortiumId),
+  index("idx_claims_assigned_to_id").on(table.assignedToId),
+]);
+
 export const sessions = sqliteTable("sessions", {
   id: text("id").primaryKey(),
   userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),

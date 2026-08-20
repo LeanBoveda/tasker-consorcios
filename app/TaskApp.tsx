@@ -11,6 +11,11 @@ const columns: Array<{ key: TaskItem["status"]; label: string; tone: string }> =
   { key: "done", label: "Finalizadas", tone: "green" },
 ];
 const priorityLabels = { low: "Baja", medium: "Media", high: "Alta" };
+const claimCategoryLabels = {
+  ascensor: "Ascensor", agua: "Agua", gas: "Gas", electricidad: "Electricidad", seguridad: "Seguridad",
+  limpieza: "Limpieza", convivencia: "Convivencia", administracion: "Administración", mantenimiento: "Mantenimiento", otro: "Otro",
+};
+const claimStatusLabels = { new: "Nuevo", assigned: "Asignado", in_progress: "En gestión", waiting: "Esperando", resolved: "Resuelto", closed: "Cerrado" };
 
 function initials(name: string) {
   return name.split(" ").filter(Boolean).slice(0, 2).map((part) => part[0]).join("").toUpperCase();
@@ -29,10 +34,13 @@ function longDate() {
   const value = new Intl.DateTimeFormat("es-AR", { weekday: "long", day: "numeric", month: "long" }).format(new Date());
   return value.charAt(0).toUpperCase() + value.slice(1);
 }
+function dateTimeLabel(value: number) {
+  return new Intl.DateTimeFormat("es-AR", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }).format(new Date(value));
+}
 
 export default function TaskApp({ initialData }: { initialData: WorkspaceData }) {
   const [data, setData] = useState(initialData);
-  const [view, setView] = useState<"home" | "mine">("home");
+  const [view, setView] = useState<"home" | "mine" | "claims">("home");
   const [search, setSearch] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
   const [assigneeFilter, setAssigneeFilter] = useState("all");
@@ -49,6 +57,7 @@ export default function TaskApp({ initialData }: { initialData: WorkspaceData })
     id: null, name: "", address: "", notes: "",
   });
   const [importOpen, setImportOpen] = useState(false);
+  const [emailTestOpen, setEmailTestOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
 
@@ -61,6 +70,7 @@ export default function TaskApp({ initialData }: { initialData: WorkspaceData })
   const completedThisWeek = data.tasks.filter((task) =>
     task.status === "done" && task.updatedAt > Date.now() - 7 * 86400000
   );
+  const activeClaims = data.claims.filter((claim) => claim.status !== "resolved" && claim.status !== "closed");
   const buildings = useMemo(() =>
     Array.from(new Set([...data.consorcios.map((item) => item.name), ...data.tasks.map((task) => task.building)].filter(Boolean))).sort((a, b) => a.localeCompare(b, "es")),
   [data.consorcios, data.tasks]);
@@ -107,6 +117,15 @@ export default function TaskApp({ initialData }: { initialData: WorkspaceData })
       assigneeId: form.get("assigneeId") || null, status: newTaskStatus,
     }, "Tarea creada");
     if (ok) { event.currentTarget.reset(); setNewTaskOpen(false); }
+  }
+  async function submitEmailTest(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    const ok = await mutate("/api/claims/email-test", "POST", {
+      senderName: form.get("senderName"), senderEmail: form.get("senderEmail"),
+      subject: form.get("subject"), body: form.get("body"), consortiumId: form.get("consortiumId") || null,
+    }, "Correo procesado: reclamo y tarea creados");
+    if (ok) { setEmailTestOpen(false); setView("claims"); }
   }
   async function updateSelected(input: Record<string, unknown>, success = "Tarea actualizada") {
     if (selectedTask) await mutate(`/api/tasks/${selectedTask.id}`, "PATCH", input, success);
@@ -173,6 +192,7 @@ export default function TaskApp({ initialData }: { initialData: WorkspaceData })
           <p className="nav-label">ESPACIO DE TRABAJO</p>
           <button className={`nav-item ${view === "home" ? "active" : ""}`} onClick={() => setView("home")}><span aria-hidden="true">⌂</span>Inicio</button>
           <button className={`nav-item ${view === "mine" ? "active" : ""}`} onClick={() => setView("mine")}><span aria-hidden="true">✓</span>Mis tareas<span className="nav-count">{activeTasks.length}</span></button>
+          <button className={`nav-item ${view === "claims" ? "active" : ""}`} onClick={() => setView("claims")}><span aria-hidden="true">✉</span>Reclamos<span className="nav-count">{activeClaims.length}</span></button>
           <button className="nav-item" onClick={() => setTeamOpen(true)}><span aria-hidden="true">♙</span>Equipo</button>
           <button className="nav-item" onClick={() => setConsortiaOpen(true)}><span aria-hidden="true">▦</span>Consorcios<span className="nav-count">{data.consorcios.length}</span></button>
           <button className="nav-item" onClick={() => setNotice("La actividad queda registrada dentro de cada tarea.")}><span aria-hidden="true">◷</span>Actividad</button>
@@ -186,15 +206,18 @@ export default function TaskApp({ initialData }: { initialData: WorkspaceData })
 
       <section className="workspace">
         <header className="topbar">
-          <div><p className="eyebrow">{longDate()}</p><h1>Buenos días, {firstName}</h1><p className="subtitle">{activeTasks.length ? `Tenés ${activeTasks.length} tareas activas para organizar.` : "Tu tablero está al día."}</p></div>
+          <div><p className="eyebrow">{view === "claims" ? "BANDEJA DE ENTRADA" : longDate()}</p><h1>{view === "claims" ? "Reclamos recibidos" : `Buenos días, ${firstName}`}</h1><p className="subtitle">{view === "claims" ? "Probá cómo un correo se transforma en un reclamo y una tarea." : activeTasks.length ? `Tenés ${activeTasks.length} tareas activas para organizar.` : "Tu tablero está al día."}</p></div>
           <div className="topbar-actions">
-            {searchOpen && <input className="search-input" autoFocus value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar tarea o consorcio…" aria-label="Buscar" />}
-            <button className="icon-button" aria-label="Buscar" onClick={() => setSearchOpen((value) => !value)}>⌕</button>
+            {view !== "claims" && searchOpen && <input className="search-input" autoFocus value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar tarea o consorcio…" aria-label="Buscar" />}
+            {view !== "claims" && <button className="icon-button" aria-label="Buscar" onClick={() => setSearchOpen((value) => !value)}>⌕</button>}
             <button className="icon-button notification" aria-label="Notificaciones" onClick={() => setNotice("No tenés notificaciones pendientes.")}>♢</button>
-            <button className="primary-button" onClick={() => openNewTask()}><span aria-hidden="true">＋</span> Nueva tarea</button>
+            {view === "claims" && data.currentUser.role === "admin"
+              ? <button className="primary-button" onClick={() => setEmailTestOpen(true)}><span aria-hidden="true">✉</span> Probar correo</button>
+              : <button className="primary-button" onClick={() => openNewTask()}><span aria-hidden="true">＋</span> Nueva tarea</button>}
           </div>
         </header>
 
+        {view !== "claims" ? <>
         <div className="summary-row">
           <article className="summary-card highlighted"><span className="summary-icon">✓</span><div><strong>{activeTasks.length}</strong><span>Tareas activas visibles</span></div><span className="summary-trend">{activeTasks.filter((task) => dueLabel(task.dueDate) === "Hoy").length} para hoy</span></article>
           <article className="summary-card"><span className="summary-icon blue">♙</span><div><strong>{delegated.length}</strong><span>Delegadas al equipo</span></div><span className="summary-trend neutral">{delegated.filter((task) => task.status === "in_progress").length} en curso</span></article>
@@ -231,6 +254,35 @@ export default function TaskApp({ initialData }: { initialData: WorkspaceData })
             );
           })}
         </div>
+        </> : (
+          <div className="claims-view">
+            <section className="email-test-banner">
+              <div className="email-test-icon" aria-hidden="true">✉</div>
+              <div><span className="modal-kicker">PRUEBA INICIAL</span><h2>Ingreso automático por correo</h2><p>Esta versión simula la llegada de un email. Tasker detecta la categoría y prioridad mediante palabras clave, guarda el reclamo y crea una tarea asignada a vos.</p></div>
+              {data.currentUser.role === "admin" && <button className="primary-button" onClick={() => setEmailTestOpen(true)}>Ejecutar prueba</button>}
+            </section>
+            <div className="claims-summary">
+              <article><strong>{data.claims.length}</strong><span>Correos procesados</span></article>
+              <article><strong>{activeClaims.length}</strong><span>Reclamos activos</span></article>
+              <article><strong>{data.claims.filter((claim) => claim.priority === "high").length}</strong><span>Prioridad alta</span></article>
+            </div>
+            <div className="claims-heading"><div><h2>Bandeja de reclamos</h2><p>Los elementos marcados como prueba no provienen todavía de una casilla real.</p></div></div>
+            <div className="claims-list">
+              {data.claims.map((claim) => (
+                <article className="claim-card" key={claim.id}>
+                  <div className="claim-card-main">
+                    <div className="claim-badges"><span className={`priority ${priorityLabels[claim.priority].toLowerCase()}`}>{priorityLabels[claim.priority]}</span><span className="claim-channel">✉ Email</span>{claim.isTest && <span className="claim-test">Prueba</span>}</div>
+                    <h3>{claim.subject}</h3>
+                    <p className="claim-preview">{claim.body}</p>
+                    <div className="claim-meta"><span>De: <strong>{claim.senderName}</strong> · {claim.senderEmail}</span><span>▦ {claim.consortiumName || "Sin consorcio"}</span><span>◷ {dateTimeLabel(claim.createdAt)}</span></div>
+                  </div>
+                  <div className="claim-card-side"><span className="claim-category">{claimCategoryLabels[claim.category]}</span><span className={`claim-status ${claim.status}`}>{claimStatusLabels[claim.status]}</span>{claim.taskId && <button className="row-button" onClick={() => { setView("home"); setSelectedTaskId(claim.taskId); }}>Abrir tarea</button>}</div>
+                </article>
+              ))}
+              {data.claims.length === 0 && <div className="claims-empty"><span aria-hidden="true">✉</span><h3>Todavía no hay reclamos</h3><p>Ejecutá el primer correo de prueba para comprobar el circuito completo.</p>{data.currentUser.role === "admin" && <button className="primary-button" onClick={() => setEmailTestOpen(true)}>Probar ahora</button>}</div>}
+            </div>
+          </div>
+        )}
       </section>
 
       {newTaskOpen && (
@@ -337,6 +389,26 @@ export default function TaskApp({ initialData }: { initialData: WorkspaceData })
               ))}
               {data.consorcios.length === 0 && <p className="empty-consortia">Todavía no hay consorcios. Agregá el primero para poder seleccionarlo en las tareas.</p>}
             </div>
+          </section>
+        </div>
+      )}
+
+      {emailTestOpen && (
+        <div className="modal-backdrop" onMouseDown={() => setEmailTestOpen(false)}>
+          <section className="modal email-test-modal" role="dialog" aria-modal="true" aria-labelledby="email-test-title" onMouseDown={(event) => event.stopPropagation()}>
+            <div className="modal-header"><div><span className="modal-kicker">CORREO DE PRUEBA</span><h2 id="email-test-title">Simular un reclamo recibido</h2></div><button className="close-button" onClick={() => setEmailTestOpen(false)} aria-label="Cerrar">×</button></div>
+            <div className="test-mode-note"><span aria-hidden="true">●</span><p><strong>No envía ni recibe emails reales.</strong> Sirve para validar cómo quedarán el reclamo y la tarea antes de conectar una casilla.</p></div>
+            <form onSubmit={submitEmailTest}>
+              <div className="form-grid">
+                <label>Nombre del remitente<input name="senderName" required autoFocus defaultValue="María López" /></label>
+                <label>Correo del remitente<input name="senderEmail" type="email" required defaultValue="maria@example.com" /></label>
+              </div>
+              <label>Consorcio<select name="consortiumId" defaultValue=""><option value="">Sin identificar</option>{data.consorcios.map((item) => <option value={item.id} key={item.id}>{item.name}{item.address ? ` · ${item.address}` : ""}</option>)}</select></label>
+              <label>Asunto<input name="subject" required defaultValue="Ascensor detenido - urgente" /></label>
+              <label>Mensaje<textarea name="body" rows={5} required defaultValue="El ascensor no funciona desde esta mañana. Hay una persona mayor que no puede bajar." /></label>
+              <p className="classification-help">Para esta prueba se buscan palabras como “ascensor”, “agua”, “gas”, “expensas” y “urgente”. Más adelante podemos reemplazar estas reglas por el análisis de una IA.</p>
+              <div className="modal-actions"><button type="button" className="secondary-button" onClick={() => setEmailTestOpen(false)}>Cancelar</button><button className="primary-button" disabled={saving}>{saving ? "Procesando…" : "Procesar correo"}</button></div>
+            </form>
           </section>
         </div>
       )}
