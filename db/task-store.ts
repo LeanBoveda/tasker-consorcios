@@ -891,6 +891,26 @@ export async function deleteTask(identity: AuthIdentity, taskId: string) {
   return loadWorkspace(identity);
 }
 
+export async function deleteClaim(identity: AuthIdentity, claimId: string) {
+  await requireAdmin(identity);
+  const db = getDatabase();
+  const claim = await db.prepare("SELECT task_id FROM claims WHERE id = ?")
+    .bind(claimId).first<{ task_id: string | null }>();
+  if (!claim) throw new Error("Reclamo no encontrado");
+
+  if (claim.task_id) {
+    await db.batch([
+      db.prepare("DELETE FROM claims WHERE id = ?").bind(claimId),
+      db.prepare(`DELETE FROM tasks WHERE id = ?
+        AND NOT EXISTS (SELECT 1 FROM claims WHERE task_id = ?)`)
+        .bind(claim.task_id, claim.task_id),
+    ]);
+  } else {
+    await db.prepare("DELETE FROM claims WHERE id = ?").bind(claimId).run();
+  }
+  return loadWorkspace(identity);
+}
+
 export async function addComment(identity: AuthIdentity, taskId: string, bodyValue: string) {
   const user = await currentUser(identity);
   const body = bodyValue.trim();

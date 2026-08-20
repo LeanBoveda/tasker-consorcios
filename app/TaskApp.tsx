@@ -342,6 +342,12 @@ export default function TaskApp({ initialData }: { initialData: WorkspaceData })
     const ok = await mutate(`/api/tasks/${selectedTask.id}`, "DELETE", undefined, "Tarea eliminada");
     if (ok) setSelectedTaskId(null);
   }
+  async function removeClaim(claim: WorkspaceData["claims"][number]) {
+    const linkedTaskNote = claim.taskId ? " y la tarea relacionada" : "";
+    const confirmed = window.confirm(`¿Eliminar el reclamo “${claim.subject}”?\n\nSe borrará el reclamo${linkedTaskNote} definitivamente.`);
+    if (!confirmed) return;
+    await mutate(`/api/claims/${claim.id}`, "DELETE", undefined, "Reclamo eliminado");
+  }
   async function submitComment(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!selectedTask) return;
@@ -514,7 +520,7 @@ export default function TaskApp({ initialData }: { initialData: WorkspaceData })
                     <p className="claim-preview">{claim.body}</p>
                     <div className="claim-meta"><span>De: <strong>{claim.senderName}</strong> · {claim.senderEmail}</span><span>▦ {claim.consortiumName || "Sin consorcio"}</span><span>◷ {dateTimeLabel(claim.createdAt)}</span></div>
                   </div>
-                  <div className="claim-card-side"><span className="claim-category">{claimCategoryLabels[claim.category]}</span><span className={`claim-status ${claim.status}`}>{claimStatusLabels[claim.status]}</span>{claim.taskId && <button className="row-button" onClick={() => { setView("home"); setSelectedTaskId(claim.taskId); }}>Abrir tarea</button>}</div>
+                  <div className="claim-card-side"><span className="claim-category">{claimCategoryLabels[claim.category]}</span><span className={`claim-status ${claim.status}`}>{claimStatusLabels[claim.status]}</span>{claim.taskId && <button className="row-button" onClick={() => { setView("home"); setSelectedTaskId(claim.taskId); }}>Abrir tarea</button>}{data.currentUser.role === "admin" && <button className="row-button danger" disabled={saving} onClick={() => void removeClaim(claim)}>Eliminar</button>}</div>
                 </article>
               ))}
               {data.claims.length === 0 && <div className="claims-empty"><span aria-hidden="true">✉</span><h3>Esperando el primer reclamo</h3><p>Enviá un correo con el asunto <strong>[RECLAMO] Tu asunto</strong> y luego actualizá esta bandeja.</p>{data.currentUser.role === "admin" && <button className="secondary-button" onClick={() => setEmailTestOpen(true)}>Usar simulación</button>}</div>}
