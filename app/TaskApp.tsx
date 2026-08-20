@@ -50,6 +50,7 @@ export default function TaskApp({ initialData }: { initialData: WorkspaceData })
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const [draggedTaskId, setDraggedTaskId] = useState<string | null>(null);
   const [dropTargetStatus, setDropTargetStatus] = useState<TaskItem["status"] | null>(null);
+  const [trashDropActive, setTrashDropActive] = useState(false);
   const suppressTaskClick = useRef(false);
   const [teamOpen, setTeamOpen] = useState(false);
   const [userDraft, setUserDraft] = useState<{ id: string | null; name: string; username: string; role: "admin" | "member"; password: string }>({
@@ -82,6 +83,8 @@ export default function TaskApp({ initialData }: { initialData: WorkspaceData })
   const activeClaims = data.claims.filter((claim) => claim.status !== "resolved" && claim.status !== "closed");
   const isTaskView = view === "home" || view === "mine";
   const isAdmin = data.currentUser.role === "admin";
+  const draggedTask = data.tasks.find((task) => task.id === draggedTaskId) ?? null;
+  const canDeleteDraggedTask = Boolean(draggedTask && (isAdmin || draggedTask.creatorId === data.currentUser.id));
   const usersWithEmail = data.users.filter((user) => /^\S+@\S+\.\S+$/.test(user.email) && !user.email.endsWith("@tasker.local"));
   const buildings = useMemo(() =>
     Array.from(new Set([...data.consorcios.map((item) => item.name), ...data.tasks.map((task) => task.building)].filter(Boolean))).sort((a, b) => a.localeCompare(b, "es")),
@@ -134,6 +137,7 @@ export default function TaskApp({ initialData }: { initialData: WorkspaceData })
   function finishTaskDrag() {
     setDraggedTaskId(null);
     setDropTargetStatus(null);
+    setTrashDropActive(false);
     window.setTimeout(() => { suppressTaskClick.current = false; }, 0);
   }
 
@@ -141,6 +145,7 @@ export default function TaskApp({ initialData }: { initialData: WorkspaceData })
     if (!draggedTaskId) return;
     event.preventDefault();
     event.dataTransfer.dropEffect = "move";
+    setTrashDropActive(false);
     if (dropTargetStatus !== status) setDropTargetStatus(status);
   }
 
@@ -149,6 +154,7 @@ export default function TaskApp({ initialData }: { initialData: WorkspaceData })
     const taskId = event.dataTransfer.getData("text/task-id") || draggedTaskId;
     setDraggedTaskId(null);
     setDropTargetStatus(null);
+    setTrashDropActive(false);
     window.setTimeout(() => { suppressTaskClick.current = false; }, 0);
     if (!taskId) return;
     const task = data.tasks.find((item) => item.id === taskId);
@@ -181,6 +187,30 @@ export default function TaskApp({ initialData }: { initialData: WorkspaceData })
     } finally {
       setSaving(false);
     }
+  }
+
+  function allowTrashDrop(event: DragEvent<HTMLDivElement>) {
+    if (!canDeleteDraggedTask) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "move";
+    setDropTargetStatus(null);
+    setTrashDropActive(true);
+  }
+
+  async function dropTaskInTrash(event: DragEvent<HTMLDivElement>) {
+    event.preventDefault();
+    const taskId = event.dataTransfer.getData("text/task-id") || draggedTaskId;
+    const task = data.tasks.find((item) => item.id === taskId);
+    setDraggedTaskId(null);
+    setDropTargetStatus(null);
+    setTrashDropActive(false);
+    window.setTimeout(() => { suppressTaskClick.current = false; }, 0);
+    if (!task || (!isAdmin && task.creatorId !== data.currentUser.id)) return;
+
+    const confirmed = window.confirm(`¿Enviar “${task.title}” al tacho?\n\nLa tarea y todos sus comentarios se borrarán definitivamente.`);
+    if (!confirmed) return;
+    const ok = await mutate(`/api/tasks/${task.id}`, "DELETE", undefined, "Tarea eliminada");
+    if (ok && selectedTaskId === task.id) setSelectedTaskId(null);
   }
 
   async function submitTask(event: FormEvent<HTMLFormElement>) {
@@ -406,7 +436,7 @@ export default function TaskApp({ initialData }: { initialData: WorkspaceData })
         </div>
 
         <div className="board-heading">
-          <div><h2>{view === "mine" ? "Mis tareas" : "Tablero de tareas"}</h2><p>{visibleTasks.length} tareas visibles · Arrastrá una tarjeta para cambiar su estado. En celular, abrila y usá el campo Estado.</p></div>
+          <div><h2>{view === "mine" ? "Mis tareas" : "Tablero de tareas"}</h2><p>{visibleTasks.length} tareas visibles · Arrastrá una tarjeta para cambiar su estado o llevarla al tacho. En celular, abrila para realizar estas acciones.</p></div>
           <div className="board-actions">
             <select className="filter-button" aria-label="Filtrar por persona" value={assigneeFilter} onChange={(event) => setAssigneeFilter(event.target.value)}><option value="all">Todas las personas</option>{data.users.map((user) => <option value={user.id} key={user.id}>{user.name}</option>)}</select>
             <select className="filter-button" aria-label="Filtrar por consorcio" value={buildingFilter} onChange={(event) => setBuildingFilter(event.target.value)}><option value="all">Todos los consorcios</option>{buildings.map((building) => <option value={building} key={building}>{building}</option>)}</select>
@@ -450,6 +480,18 @@ export default function TaskApp({ initialData }: { initialData: WorkspaceData })
             );
           })}
         </div>
+        {draggedTaskId && canDeleteDraggedTask && (
+          <div
+            className={`task-trash-drop ${trashDropActive ? "active" : ""}`}
+            onDragEnter={allowTrashDrop}
+            onDragOver={allowTrashDrop}
+            onDrop={(event) => void dropTaskInTrash(event)}
+            aria-label="Tacho para eliminar la tarea"
+          >
+            <span className="trash-icon" aria-hidden="true">🗑</span>
+            <div><strong>{trashDropActive ? "Soltá para eliminar" : "Llevar al tacho"}</strong><small>Se pedirá confirmación</small></div>
+          </div>
+        )}
         </> : view === "claims" ? (
           <div className="claims-view">
             <section className="email-test-banner">
