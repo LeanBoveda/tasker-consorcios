@@ -892,6 +892,38 @@ async function requireAdmin(identity: AuthIdentity) {
   return user;
 }
 
+export async function resetOperationalData(identity: AuthIdentity) {
+  await requireAdmin(identity);
+  const db = getDatabase();
+  const [taskCount, claimCount, commentCount, eventCount] = await Promise.all([
+    db.prepare("SELECT count(*) AS total FROM tasks").first<{ total: number }>(),
+    db.prepare("SELECT count(*) AS total FROM claims").first<{ total: number }>(),
+    db.prepare("SELECT count(*) AS total FROM comments").first<{ total: number }>(),
+    db.prepare("SELECT count(*) AS total FROM email_intake_events").first<{ total: number }>(),
+  ]);
+
+  await db.batch([
+    db.prepare("DELETE FROM email_notifications"),
+    db.prepare("DELETE FROM email_intake_events"),
+    db.prepare("DELETE FROM claims"),
+    db.prepare("DELETE FROM comments"),
+    db.prepare("DELETE FROM tasks"),
+    db.prepare(`UPDATE mail_settings SET last_sync_at = NULL, last_sync_status = 'idle',
+      last_sync_detail = '', last_sync_processed = 0 WHERE id = 'default'`),
+    db.prepare("PRAGMA optimize"),
+  ]);
+
+  return {
+    ok: true,
+    deleted: {
+      tasks: Number(taskCount?.total ?? 0),
+      claims: Number(claimCount?.total ?? 0),
+      comments: Number(commentCount?.total ?? 0),
+      intakeEvents: Number(eventCount?.total ?? 0),
+    },
+  };
+}
+
 export async function updateMailSettings(identity: AuthIdentity, input: Partial<MailSettings>) {
   const user = await requireAdmin(identity);
   const current = await readMailSettings();
