@@ -1,7 +1,7 @@
 "use client";
 
 import { FormEvent, useMemo, useState } from "react";
-import type { TaskItem, WorkspaceData } from "@/db/task-store";
+import type { MailSettings, TaskItem, WorkspaceData } from "@/db/task-store";
 import UserImport from "./UserImport";
 
 const columns: Array<{ key: TaskItem["status"]; label: string; tone: string }> = [
@@ -40,7 +40,7 @@ function dateTimeLabel(value: number) {
 
 export default function TaskApp({ initialData }: { initialData: WorkspaceData }) {
   const [data, setData] = useState(initialData);
-  const [view, setView] = useState<"home" | "mine" | "claims">("home");
+  const [view, setView] = useState<"home" | "mine" | "claims" | "mail">("home");
   const [search, setSearch] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
   const [assigneeFilter, setAssigneeFilter] = useState("all");
@@ -58,6 +58,8 @@ export default function TaskApp({ initialData }: { initialData: WorkspaceData })
   });
   const [importOpen, setImportOpen] = useState(false);
   const [emailTestOpen, setEmailTestOpen] = useState(false);
+  const [mailDraft, setMailDraft] = useState<MailSettings | null>(initialData.mailSettings);
+  const [newRecipient, setNewRecipient] = useState("");
   const [saving, setSaving] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
 
@@ -71,6 +73,8 @@ export default function TaskApp({ initialData }: { initialData: WorkspaceData })
     task.status === "done" && task.updatedAt > Date.now() - 7 * 86400000
   );
   const activeClaims = data.claims.filter((claim) => claim.status !== "resolved" && claim.status !== "closed");
+  const isTaskView = view === "home" || view === "mine";
+  const usersWithEmail = data.users.filter((user) => /^\S+@\S+\.\S+$/.test(user.email) && !user.email.endsWith("@tasker.local"));
   const buildings = useMemo(() =>
     Array.from(new Set([...data.consorcios.map((item) => item.name), ...data.tasks.map((task) => task.building)].filter(Boolean))).sort((a, b) => a.localeCompare(b, "es")),
   [data.consorcios, data.tasks]);
@@ -144,6 +148,52 @@ export default function TaskApp({ initialData }: { initialData: WorkspaceData })
       setSaving(false);
     }
   }
+  async function saveMailSettings(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!mailDraft) return;
+    setSaving(true);
+    setNotice(null);
+    try {
+      const response = await fetch("/api/mail/settings", {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(mailDraft),
+      });
+      const payload = await response.json() as WorkspaceData & { error?: string };
+      if (!response.ok) throw new Error(payload.error ?? "No se pudo guardar la configuración");
+      setData(payload);
+      setMailDraft(payload.mailSettings);
+      setNotice("Configuración de correo guardada");
+      window.setTimeout(() => setNotice(null), 3200);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "No se pudo guardar la configuración");
+    } finally {
+      setSaving(false);
+    }
+  }
+  function toggleRecipient(emailValue: string) {
+    if (!mailDraft) return;
+    const email = emailValue.trim().toLocaleLowerCase("es");
+    if (!email) return;
+    setMailDraft({
+      ...mailDraft,
+      reminderRecipients: mailDraft.reminderRecipients.includes(email)
+        ? mailDraft.reminderRecipients.filter((item) => item !== email)
+        : [...mailDraft.reminderRecipients, email],
+    });
+  }
+  function addRecipient() {
+    if (!mailDraft || !newRecipient.trim()) return;
+    const email = newRecipient.trim().toLocaleLowerCase("es");
+    if (!/^\S+@\S+\.\S+$/.test(email)) {
+      setNotice("Ingresá un correo válido");
+      return;
+    }
+    if (!mailDraft.reminderRecipients.includes(email)) {
+      setMailDraft({ ...mailDraft, reminderRecipients: [...mailDraft.reminderRecipients, email] });
+    }
+    setNewRecipient("");
+  }
   async function updateSelected(input: Record<string, unknown>, success = "Tarea actualizada") {
     if (selectedTask) await mutate(`/api/tasks/${selectedTask.id}`, "PATCH", input, success);
   }
@@ -210,6 +260,7 @@ export default function TaskApp({ initialData }: { initialData: WorkspaceData })
           <button className={`nav-item ${view === "home" ? "active" : ""}`} onClick={() => setView("home")}><span aria-hidden="true">⌂</span>Inicio</button>
           <button className={`nav-item ${view === "mine" ? "active" : ""}`} onClick={() => setView("mine")}><span aria-hidden="true">✓</span>Mis tareas<span className="nav-count">{activeTasks.length}</span></button>
           <button className={`nav-item ${view === "claims" ? "active" : ""}`} onClick={() => setView("claims")}><span aria-hidden="true">✉</span>Reclamos<span className="nav-count">{activeClaims.length}</span></button>
+          {data.currentUser.role === "admin" && <button className={`nav-item ${view === "mail" ? "active" : ""}`} onClick={() => setView("mail")}><span aria-hidden="true">⚙</span>Configuración correo</button>}
           <button className="nav-item" onClick={() => setTeamOpen(true)}><span aria-hidden="true">♙</span>Equipo</button>
           <button className="nav-item" onClick={() => setConsortiaOpen(true)}><span aria-hidden="true">▦</span>Consorcios<span className="nav-count">{data.consorcios.length}</span></button>
           <button className="nav-item" onClick={() => setNotice("La actividad queda registrada dentro de cada tarea.")}><span aria-hidden="true">◷</span>Actividad</button>
@@ -223,18 +274,23 @@ export default function TaskApp({ initialData }: { initialData: WorkspaceData })
 
       <section className="workspace">
         <header className="topbar">
-          <div><p className="eyebrow">{view === "claims" ? "BANDEJA DE ENTRADA" : longDate()}</p><h1>{view === "claims" ? "Reclamos recibidos" : `Buenos días, ${firstName}`}</h1><p className="subtitle">{view === "claims" ? "Probá cómo un correo se transforma en un reclamo y una tarea." : activeTasks.length ? `Tenés ${activeTasks.length} tareas activas para organizar.` : "Tu tablero está al día."}</p></div>
+          <div>
+            <p className="eyebrow">{view === "claims" ? "BANDEJA DE ENTRADA" : view === "mail" ? "AUTOMATIZACIÓN" : longDate()}</p>
+            <h1>{view === "claims" ? "Reclamos recibidos" : view === "mail" ? "Correo y recordatorios" : `Buenos días, ${firstName}`}</h1>
+            <p className="subtitle">{view === "claims" ? "Cada correo válido se convierte en un reclamo y una tarea." : view === "mail" ? "Elegí qué casilla se consulta y quién recibe cada aviso." : activeTasks.length ? `Tenés ${activeTasks.length} tareas activas para organizar.` : "Tu tablero está al día."}</p>
+          </div>
           <div className="topbar-actions">
-            {view !== "claims" && searchOpen && <input className="search-input" autoFocus value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar tarea o consorcio…" aria-label="Buscar" />}
-            {view !== "claims" && <button className="icon-button" aria-label="Buscar" onClick={() => setSearchOpen((value) => !value)}>⌕</button>}
+            {isTaskView && searchOpen && <input className="search-input" autoFocus value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar tarea o consorcio…" aria-label="Buscar" />}
+            {isTaskView && <button className="icon-button" aria-label="Buscar" onClick={() => setSearchOpen((value) => !value)}>⌕</button>}
             <button className="icon-button notification" aria-label="Notificaciones" onClick={() => setNotice("No tenés notificaciones pendientes.")}>♢</button>
             {view === "claims" && data.currentUser.role === "admin"
               ? <button className="primary-button" onClick={() => window.location.reload()}><span aria-hidden="true">↻</span> Actualizar</button>
+              : view === "mail" ? <button className="primary-button" disabled={saving} onClick={copyGmailConnection}><span aria-hidden="true">⧉</span> Copiar conexión</button>
               : <button className="primary-button" onClick={() => openNewTask()}><span aria-hidden="true">＋</span> Nueva tarea</button>}
           </div>
         </header>
 
-        {view !== "claims" ? <>
+        {isTaskView ? <>
         <div className="summary-row">
           <article className="summary-card highlighted"><span className="summary-icon">✓</span><div><strong>{activeTasks.length}</strong><span>Tareas activas visibles</span></div><span className="summary-trend">{activeTasks.filter((task) => dueLabel(task.dueDate) === "Hoy").length} para hoy</span></article>
           <article className="summary-card"><span className="summary-icon blue">♙</span><div><strong>{delegated.length}</strong><span>Delegadas al equipo</span></div><span className="summary-trend neutral">{delegated.filter((task) => task.status === "in_progress").length} en curso</span></article>
@@ -271,12 +327,12 @@ export default function TaskApp({ initialData }: { initialData: WorkspaceData })
             );
           })}
         </div>
-        </> : (
+        </> : view === "claims" ? (
           <div className="claims-view">
             <section className="email-test-banner">
               <div className="email-test-icon" aria-hidden="true">✉</div>
-              <div><span className="modal-kicker">GMAIL REAL</span><h2>leandroboveda@gmail.com</h2><p>Mandate un correo a esta dirección con un asunto que empiece con <strong>[RECLAMO]</strong>. En aproximadamente un minuto se cargará aquí y también se creará la tarea.</p><div className="gmail-test-example"><span>Asunto de ejemplo</span><code>[RECLAMO] Ascensor detenido - urgente</code></div></div>
-              {data.currentUser.role === "admin" && <div className="email-test-banner-actions"><button className="primary-button" disabled={saving} onClick={copyGmailConnection}>{saving ? "Preparando…" : "Copiar conexión Gmail"}</button><button className="secondary-button" onClick={() => window.location.reload()}>↻ Actualizar bandeja</button><button className="secondary-button" onClick={() => setEmailTestOpen(true)}>Prueba simulada</button></div>}
+              <div><span className="modal-kicker">GMAIL REAL</span><h2>{data.mailSettings?.inboxAddress ?? "Casilla configurada"}</h2><p>Los correos cuyo asunto empiece con <strong>{data.mailSettings?.subjectPrefix ?? "[RECLAMO]"}</strong> se cargarán aquí y también crearán una tarea.</p><div className="gmail-test-example"><span>Asunto de ejemplo</span><code>{data.mailSettings?.subjectPrefix ?? "[RECLAMO]"} Ascensor detenido - urgente</code></div></div>
+              {data.currentUser.role === "admin" && <div className="email-test-banner-actions"><button className="primary-button" onClick={() => setView("mail")}>Configurar correo</button><button className="secondary-button" onClick={() => window.location.reload()}>↻ Actualizar bandeja</button><button className="secondary-button" onClick={() => setEmailTestOpen(true)}>Prueba simulada</button></div>}
             </section>
             <div className="claims-summary">
               <article><strong>{data.claims.length}</strong><span>Correos procesados</span></article>
@@ -299,7 +355,54 @@ export default function TaskApp({ initialData }: { initialData: WorkspaceData })
               {data.claims.length === 0 && <div className="claims-empty"><span aria-hidden="true">✉</span><h3>Esperando el primer reclamo</h3><p>Enviá un correo con el asunto <strong>[RECLAMO] Tu asunto</strong> y luego actualizá esta bandeja.</p>{data.currentUser.role === "admin" && <button className="secondary-button" onClick={() => setEmailTestOpen(true)}>Usar simulación</button>}</div>}
             </div>
           </div>
-        )}
+        ) : mailDraft ? (
+          <form className="mail-settings-view" onSubmit={saveMailSettings}>
+            <section className="settings-card settings-card-intake">
+              <div className="settings-card-heading">
+                <div><span className="settings-icon" aria-hidden="true">✉</span><div><span className="modal-kicker">RECEPCIÓN</span><h2>Casilla de reclamos</h2><p>Tasker consulta esta dirección y toma solamente los asuntos que coinciden con el prefijo.</p></div></div>
+                <label className="switch-label"><input type="checkbox" checked={mailDraft.intakeEnabled} onChange={(event) => setMailDraft({ ...mailDraft, intakeEnabled: event.target.checked })} /><span>Lectura automática</span></label>
+              </div>
+              <div className="settings-form-grid">
+                <label>Casilla que se debe leer<input type="email" required value={mailDraft.inboxAddress} onChange={(event) => setMailDraft({ ...mailDraft, inboxAddress: event.target.value })} placeholder="administracion@gmail.com" /></label>
+                <label>Prefijo obligatorio del asunto<input required value={mailDraft.subjectPrefix} onChange={(event) => setMailDraft({ ...mailDraft, subjectPrefix: event.target.value })} placeholder="[RECLAMO]" /></label>
+                <label>Buscar correos de los últimos<select value={mailDraft.lookbackDays} onChange={(event) => setMailDraft({ ...mailDraft, lookbackDays: Number(event.target.value) })}><option value={1}>1 día</option><option value={3}>3 días</option><option value={7}>7 días</option><option value={14}>14 días</option><option value={30}>30 días</option></select></label>
+                <div className="connection-status"><span className={`status-dot ${mailDraft.intakeEnabled ? "" : "paused"}`} /><div><strong>{mailDraft.intakeEnabled ? "Recepción activa" : "Recepción pausada"}</strong><small>La consulta se ejecuta aproximadamente cada minuto.</small></div></div>
+              </div>
+              <div className="settings-note"><span aria-hidden="true">i</span><p>Si cambiás a otra cuenta de Gmail, guardá primero y volvé a usar <strong>Copiar conexión</strong> desde esa cuenta para autorizarla. Si solo cambiás un alias de la misma cuenta, la conexión se actualiza sola.</p></div>
+            </section>
+
+            <section className="settings-card">
+              <div className="settings-card-heading">
+                <div><span className="settings-icon reminder" aria-hidden="true">◷</span><div><span className="modal-kicker">AVISOS</span><h2>Recordatorios por email</h2><p>Los mensajes salen desde la cuenta de Gmail que autorizó la conexión.</p></div></div>
+                <label className="switch-label"><input type="checkbox" checked={mailDraft.remindersEnabled} onChange={(event) => setMailDraft({ ...mailDraft, remindersEnabled: event.target.checked })} /><span>Enviar recordatorios</span></label>
+              </div>
+
+              <div className="reminder-options">
+                <label className="check-card"><input type="checkbox" checked={mailDraft.notifyUrgent} onChange={(event) => setMailDraft({ ...mailDraft, notifyUrgent: event.target.checked })} /><span><strong>Reclamos urgentes</strong><small>Aviso inmediato por prioridad alta.</small></span></label>
+                <label className="check-card"><input type="checkbox" checked={mailDraft.notifyDueToday} onChange={(event) => setMailDraft({ ...mailDraft, notifyDueToday: event.target.checked })} /><span><strong>Tareas para hoy</strong><small>Un aviso el día del vencimiento.</small></span></label>
+                <label className="check-card"><input type="checkbox" checked={mailDraft.notifyOverdue} onChange={(event) => setMailDraft({ ...mailDraft, notifyOverdue: event.target.checked })} /><span><strong>Tareas vencidas</strong><small>Recordatorio diario mientras sigan abiertas.</small></span></label>
+                <label className="check-card"><input type="checkbox" checked={mailDraft.dailySummary} onChange={(event) => setMailDraft({ ...mailDraft, dailySummary: event.target.checked })} /><span><strong>Resumen diario</strong><small>Totales de tareas y reclamos pendientes.</small></span></label>
+              </div>
+
+              <div className="reminder-time-row"><label>Hora de los avisos diarios<select value={mailDraft.reminderHour} onChange={(event) => setMailDraft({ ...mailDraft, reminderHour: Number(event.target.value) })}>{Array.from({ length: 15 }, (_, index) => index + 7).map((hour) => <option value={hour} key={hour}>{String(hour).padStart(2, "0")}:00</option>)}</select></label><span>Zona horaria: Buenos Aires</span></div>
+
+              <div className="recipient-section">
+                <div className="recipient-heading"><div><h3>Destinatarios</h3><p>Elegí personas del equipo o agregá cualquier otra dirección.</p></div><span>{mailDraft.reminderRecipients.length} seleccionados</span></div>
+                <div className="team-recipient-grid">
+                  {usersWithEmail.map((user) => {
+                    const selected = mailDraft.reminderRecipients.includes(user.email.toLocaleLowerCase("es"));
+                    return <button type="button" className={`recipient-person ${selected ? "selected" : ""}`} key={user.id} onClick={() => toggleRecipient(user.email)}><span className="avatar">{initials(user.name)}</span><span><strong>{user.name}</strong><small>{user.email}</small></span><span className="recipient-check">{selected ? "✓" : "+"}</span></button>;
+                  })}
+                  {usersWithEmail.length === 0 && <p className="no-team-emails">Los usuarios actuales no tienen un email real cargado. Podés agregar las direcciones manualmente debajo.</p>}
+                </div>
+                <div className="recipient-chips">{mailDraft.reminderRecipients.map((email) => <span key={email}>{email}<button type="button" aria-label={`Quitar ${email}`} onClick={() => toggleRecipient(email)}>×</button></span>)}</div>
+                <div className="add-recipient"><input type="email" value={newRecipient} onChange={(event) => setNewRecipient(event.target.value)} placeholder="otro@email.com" onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); addRecipient(); } }} /><button type="button" className="secondary-button" onClick={addRecipient}>Agregar destinatario</button></div>
+              </div>
+            </section>
+
+            <div className="settings-actions"><p>Los recordatorios usan asuntos con <strong>[TASKER]</strong>, por lo que nunca se convertirán en reclamos nuevos.</p><div><button type="button" className="secondary-button" disabled={saving} onClick={copyGmailConnection}>Copiar conexión Gmail</button><button className="primary-button" disabled={saving}>{saving ? "Guardando…" : "Guardar configuración"}</button></div></div>
+          </form>
+        ) : null}
       </section>
 
       {newTaskOpen && (

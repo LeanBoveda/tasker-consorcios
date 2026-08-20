@@ -84,6 +84,41 @@ export const claims = sqliteTable("claims", {
   index("idx_claims_assigned_to_id").on(table.assignedToId),
 ]);
 
+export const mailSettings = sqliteTable("mail_settings", {
+  id: text("id").primaryKey(),
+  intakeEnabled: integer("intake_enabled", { mode: "boolean" }).notNull().default(true),
+  inboxAddress: text("inbox_address").notNull().default("leandroboveda@gmail.com"),
+  subjectPrefix: text("subject_prefix").notNull().default("[RECLAMO]"),
+  lookbackDays: integer("lookback_days").notNull().default(7),
+  remindersEnabled: integer("reminders_enabled", { mode: "boolean" }).notNull().default(false),
+  reminderRecipients: text("reminder_recipients").notNull().default("[]"),
+  notifyUrgent: integer("notify_urgent", { mode: "boolean" }).notNull().default(true),
+  notifyDueToday: integer("notify_due_today", { mode: "boolean" }).notNull().default(true),
+  notifyOverdue: integer("notify_overdue", { mode: "boolean" }).notNull().default(true),
+  dailySummary: integer("daily_summary", { mode: "boolean" }).notNull().default(false),
+  reminderHour: integer("reminder_hour").notNull().default(9),
+  timezone: text("timezone").notNull().default("America/Buenos_Aires"),
+  updatedById: text("updated_by_id").references(() => users.id, { onDelete: "set null" }),
+  updatedAt: integer("updated_at").notNull(),
+});
+
+export const emailNotifications = sqliteTable("email_notifications", {
+  id: text("id").primaryKey(),
+  notificationKey: text("notification_key").notNull(),
+  recipientEmail: text("recipient_email").notNull(),
+  type: text("type", { enum: ["urgent", "due_today", "overdue", "daily_summary"] }).notNull(),
+  subject: text("subject").notNull(),
+  body: text("body").notNull(),
+  status: text("status", { enum: ["pending", "reserved", "sent"] }).notNull().default("pending"),
+  reservedAt: integer("reserved_at"),
+  sentAt: integer("sent_at"),
+  createdAt: integer("created_at").notNull(),
+  updatedAt: integer("updated_at").notNull(),
+}, (table) => [
+  uniqueIndex("email_notifications_key_unique").on(table.notificationKey),
+  index("idx_email_notifications_status_created").on(table.status, table.createdAt),
+]);
+
 export const sessions = sqliteTable("sessions", {
   id: text("id").primaryKey(),
   userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),

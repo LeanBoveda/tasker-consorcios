@@ -56,7 +56,29 @@ export type ClaimItem = {
   createdAt: number;
   updatedAt: number;
 };
-export type WorkspaceData = { currentUser: AppUser; users: AppUser[]; consorcios: ConsortiumItem[]; tasks: TaskItem[]; claims: ClaimItem[] };
+export type MailSettings = {
+  intakeEnabled: boolean;
+  inboxAddress: string;
+  subjectPrefix: string;
+  lookbackDays: number;
+  remindersEnabled: boolean;
+  reminderRecipients: string[];
+  notifyUrgent: boolean;
+  notifyDueToday: boolean;
+  notifyOverdue: boolean;
+  dailySummary: boolean;
+  reminderHour: number;
+  timezone: string;
+  updatedAt: number;
+};
+export type WorkspaceData = {
+  currentUser: AppUser;
+  users: AppUser[];
+  consorcios: ConsortiumItem[];
+  tasks: TaskItem[];
+  claims: ClaimItem[];
+  mailSettings: MailSettings | null;
+};
 
 type TaskRow = {
   id: string; title: string; description: string; building: string;
@@ -77,6 +99,60 @@ type ClaimRow = {
   assigned_to_id: string | null; assigned_to_name: string | null;
   created_at: number; updated_at: number;
 };
+type MailSettingsRow = {
+  intake_enabled: number;
+  inbox_address: string;
+  subject_prefix: string;
+  lookback_days: number;
+  reminders_enabled: number;
+  reminder_recipients: string;
+  notify_urgent: number;
+  notify_due_today: number;
+  notify_overdue: number;
+  daily_summary: number;
+  reminder_hour: number;
+  timezone: string;
+  updated_at: number;
+};
+
+const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+function parseRecipientList(value: string): string[] {
+  try {
+    const parsed = JSON.parse(value);
+    if (!Array.isArray(parsed)) return [];
+    return Array.from(new Set(parsed.map((item) => String(item).trim().toLocaleLowerCase("es")).filter((item) => emailPattern.test(item))));
+  } catch {
+    return [];
+  }
+}
+
+function mapMailSettings(row: MailSettingsRow): MailSettings {
+  return {
+    intakeEnabled: Boolean(row.intake_enabled),
+    inboxAddress: row.inbox_address,
+    subjectPrefix: row.subject_prefix,
+    lookbackDays: row.lookback_days,
+    remindersEnabled: Boolean(row.reminders_enabled),
+    reminderRecipients: parseRecipientList(row.reminder_recipients),
+    notifyUrgent: Boolean(row.notify_urgent),
+    notifyDueToday: Boolean(row.notify_due_today),
+    notifyOverdue: Boolean(row.notify_overdue),
+    dailySummary: Boolean(row.daily_summary),
+    reminderHour: row.reminder_hour,
+    timezone: row.timezone,
+    updatedAt: row.updated_at,
+  };
+}
+
+async function readMailSettings(): Promise<MailSettings> {
+  const row = await getDatabase().prepare(`SELECT intake_enabled, inbox_address, subject_prefix,
+      lookback_days, reminders_enabled, reminder_recipients, notify_urgent, notify_due_today,
+      notify_overdue, daily_summary, reminder_hour, timezone, updated_at
+    FROM mail_settings WHERE id = 'default'`).first<MailSettingsRow>();
+  if (!row) throw new Error("No se encontró la configuración de correo");
+  return mapMailSettings(row);
+}
 
 async function currentUser(identity: AuthIdentity): Promise<AppUser> {
   await ensureDatabase();
@@ -186,6 +262,7 @@ export async function loadWorkspace(identity: AuthIdentity): Promise<WorkspaceDa
       createdAt: claim.created_at,
       updatedAt: claim.updated_at,
     })),
+    mailSettings: user.role === "admin" ? await readMailSettings() : null,
   };
 }
 
@@ -260,17 +337,28 @@ function normalizedText(value: string) {
   return value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLocaleLowerCase("es").replace(/[^a-z0-9]+/g, " ").trim();
 }
 
+function prefixPattern(prefix: string) {
+  return new RegExp(`^\\s*${prefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`, "i");
+}
+
 export async function ingestEmailClaim(input: {
-  externalId?: string; senderName?: string; senderEmail?: string; subject?: string; body?: string; receivedAt?: number;
+  externalId?: string; senderName?: string; senderEmail?: string; recipientEmails?: string;
+  subject?: string; body?: string; receivedAt?: number;
 }) {
   await ensureDatabase();
+  const mailSettings = await readMailSettings();
+  if (!mailSettings.intakeEnabled) throw new Error("La recepción automática está pausada");
   const externalIdValue = input.externalId?.trim().slice(0, 200) ?? "";
   const senderEmail = input.senderEmail?.trim().toLocaleLowerCase("es").slice(0, 320) ?? "";
   const rawSubject = input.subject?.trim().slice(0, 500) ?? "";
   const body = input.body?.trim().slice(0, 20000) ?? "";
   if (!externalIdValue) throw new Error("El mensaje no tiene identificador");
   if (!senderEmail || !senderEmail.includes("@")) throw new Error("El remitente no es válido");
-  if (!/^\[reclamo\]/i.test(rawSubject)) throw new Error("El asunto debe comenzar con [RECLAMO]");
+  const requiredPrefix = prefixPattern(mailSettings.subjectPrefix);
+  if (!requiredPrefix.test(rawSubject)) throw new Error(`El asunto debe comenzar con ${mailSettings.subjectPrefix}`);
+  if (input.recipientEmails && !input.recipientEmails.toLocaleLowerCase("es").includes(mailSettings.inboxAddress.toLocaleLowerCase("es"))) {
+    throw new Error("El correo no fue enviado a la casilla configurada");
+  }
   if (!body) throw new Error("El mensaje está vacío");
 
   const db = getDatabase();
@@ -283,7 +371,7 @@ export async function ingestEmailClaim(input: {
     WHERE role = 'admin' AND status = 'active' ORDER BY created_at LIMIT 1`).first<{ id: string }>();
   if (!admin) throw new Error("No hay un administrador activo para asignar el reclamo");
 
-  const cleanSubject = rawSubject.replace(/^\[reclamo\]\s*/i, "").trim() || "Reclamo recibido por correo";
+  const cleanSubject = rawSubject.replace(requiredPrefix, "").trim() || "Reclamo recibido por correo";
   const searchable = normalizedText(`${cleanSubject} ${body}`);
   const consortia = await db.prepare("SELECT id, name, address FROM consorcios ORDER BY length(name) DESC")
     .all<{ id: string; name: string; address: string }>();
@@ -317,6 +405,157 @@ export async function ingestEmailClaim(input: {
   ]);
 
   return { ok: true, duplicate: false, claimId, taskId, category: classification.category, priority: classification.priority, consortium: consortium?.name ?? null };
+}
+
+export async function getEmailAutomationConfiguration() {
+  await ensureDatabase();
+  const settings = await readMailSettings();
+  return {
+    intakeEnabled: settings.intakeEnabled,
+    inboxAddress: settings.inboxAddress,
+    subjectPrefix: settings.subjectPrefix,
+    lookbackDays: settings.lookbackDays,
+    remindersEnabled: settings.remindersEnabled && settings.reminderRecipients.length > 0,
+  };
+}
+
+type EmailNotificationRow = {
+  id: string;
+  recipient_email: string;
+  subject: string;
+  body: string;
+};
+
+function clockInTimezone(timezone: string) {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: timezone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(new Date());
+  const part = (type: Intl.DateTimeFormatPartTypes) => parts.find((item) => item.type === type)?.value ?? "";
+  return { date: `${part("year")}-${part("month")}-${part("day")}`, hour: Number(part("hour")) };
+}
+
+async function queueEmailNotification(input: {
+  key: string;
+  recipient: string;
+  type: "urgent" | "due_today" | "overdue" | "daily_summary";
+  subject: string;
+  body: string;
+}, now: number) {
+  await getDatabase().prepare(`INSERT OR IGNORE INTO email_notifications
+    (id, notification_key, recipient_email, type, subject, body, status, reserved_at, sent_at, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, 'pending', NULL, NULL, ?, ?)`)
+    .bind(crypto.randomUUID(), input.key, input.recipient, input.type, input.subject, input.body, now, now).run();
+}
+
+export async function reserveEmailNotifications() {
+  await ensureDatabase();
+  const settings = await readMailSettings();
+  if (!settings.remindersEnabled || !settings.reminderRecipients.length) return { messages: [] };
+
+  const db = getDatabase();
+  const now = Date.now();
+  const clock = clockInTimezone(settings.timezone);
+  const taskerUrl = "https://tasker-consorcios.cuentagpt050.chatgpt.site";
+
+  if (settings.notifyUrgent) {
+    const urgentClaims = await db.prepare(`SELECT r.id, r.subject, r.sender_name, r.sender_email,
+        COALESCE(c.name, 'Sin consorcio identificado') AS consortium_name
+      FROM claims r LEFT JOIN consorcios c ON c.id = r.consortium_id
+      WHERE r.priority = 'high' AND r.status NOT IN ('resolved', 'closed')
+      ORDER BY r.created_at DESC LIMIT 50`).all<{
+        id: string; subject: string; sender_name: string; sender_email: string; consortium_name: string;
+      }>();
+    for (const claim of urgentClaims.results ?? []) {
+      for (const recipient of settings.reminderRecipients) {
+        await queueEmailNotification({
+          key: `urgent:${claim.id}:${recipient}`,
+          recipient,
+          type: "urgent",
+          subject: `[TASKER] Reclamo urgente: ${claim.subject}`,
+          body: `Hay un reclamo de prioridad alta.\n\nAsunto: ${claim.subject}\nConsorcio: ${claim.consortium_name}\nRemitente: ${claim.sender_name} <${claim.sender_email}>\n\nAbrir Tasker: ${taskerUrl}`,
+        }, now);
+      }
+    }
+  }
+
+  if (clock.hour >= settings.reminderHour && (settings.notifyDueToday || settings.notifyOverdue)) {
+    const dueTasks = await db.prepare(`SELECT t.id, t.title, t.due_date,
+        COALESCE(NULLIF(t.building, ''), 'Sin consorcio') AS building,
+        COALESCE(assignee.name, creator.name) AS responsible_name
+      FROM tasks t JOIN users creator ON creator.id = t.creator_id
+      LEFT JOIN users assignee ON assignee.id = t.assignee_id
+      WHERE t.status <> 'done' AND t.due_date IS NOT NULL AND t.due_date <= ?
+      ORDER BY t.due_date, t.priority DESC LIMIT 100`).bind(clock.date).all<{
+        id: string; title: string; due_date: string; building: string; responsible_name: string;
+      }>();
+    for (const task of dueTasks.results ?? []) {
+      const overdue = task.due_date < clock.date;
+      if ((overdue && !settings.notifyOverdue) || (!overdue && !settings.notifyDueToday)) continue;
+      const type = overdue ? "overdue" : "due_today";
+      const state = overdue ? `Vencida desde ${task.due_date}` : "Vence hoy";
+      for (const recipient of settings.reminderRecipients) {
+        await queueEmailNotification({
+          key: `${type}:${task.id}:${clock.date}:${recipient}`,
+          recipient,
+          type,
+          subject: `[TASKER] ${overdue ? "Tarea vencida" : "Tarea para hoy"}: ${task.title}`,
+          body: `${state}.\n\nTarea: ${task.title}\nConsorcio: ${task.building}\nResponsable: ${task.responsible_name}\n\nAbrir Tasker: ${taskerUrl}`,
+        }, now);
+      }
+    }
+  }
+
+  if (settings.dailySummary && clock.hour >= settings.reminderHour) {
+    const taskSummary = await db.prepare(`SELECT
+        SUM(CASE WHEN status <> 'done' THEN 1 ELSE 0 END) AS active,
+        SUM(CASE WHEN status <> 'done' AND due_date = ? THEN 1 ELSE 0 END) AS due_today,
+        SUM(CASE WHEN status <> 'done' AND due_date < ? THEN 1 ELSE 0 END) AS overdue
+      FROM tasks`).bind(clock.date, clock.date).first<{ active: number | null; due_today: number | null; overdue: number | null }>();
+    const claimSummary = await db.prepare(`SELECT COUNT(*) AS urgent FROM claims
+      WHERE priority = 'high' AND status NOT IN ('resolved', 'closed')`).first<{ urgent: number }>();
+    for (const recipient of settings.reminderRecipients) {
+      await queueEmailNotification({
+        key: `daily_summary:${clock.date}:${recipient}`,
+        recipient,
+        type: "daily_summary",
+        subject: `[TASKER] Resumen diario del ${clock.date}`,
+        body: `Resumen de la administración:\n\nTareas activas: ${taskSummary?.active ?? 0}\nVencen hoy: ${taskSummary?.due_today ?? 0}\nVencidas: ${taskSummary?.overdue ?? 0}\nReclamos urgentes: ${claimSummary?.urgent ?? 0}\n\nAbrir Tasker: ${taskerUrl}`,
+      }, now);
+    }
+  }
+
+  await db.prepare(`UPDATE email_notifications SET status = 'pending', reserved_at = NULL, updated_at = ?
+    WHERE status = 'reserved' AND reserved_at < ?`).bind(now, now - 10 * 60 * 1000).run();
+  const pending = await db.prepare(`SELECT id, recipient_email, subject, body
+    FROM email_notifications WHERE status = 'pending' ORDER BY created_at LIMIT 25`).all<EmailNotificationRow>();
+  const rows = pending.results ?? [];
+  if (rows.length) {
+    await db.batch(rows.map((row) => db.prepare(`UPDATE email_notifications
+      SET status = 'reserved', reserved_at = ?, updated_at = ? WHERE id = ? AND status = 'pending'`)
+      .bind(now, now, row.id)));
+  }
+  return { messages: rows.map((row) => ({ id: row.id, to: row.recipient_email, subject: row.subject, body: row.body })) };
+}
+
+export async function completeEmailNotifications(input: { sentIds?: unknown; failedIds?: unknown }) {
+  await ensureDatabase();
+  const db = getDatabase();
+  const sentIds = Array.isArray(input.sentIds) ? input.sentIds.map(String).slice(0, 50) : [];
+  const failedIds = Array.isArray(input.failedIds) ? input.failedIds.map(String).slice(0, 50) : [];
+  const now = Date.now();
+  const statements = [
+    ...sentIds.map((id) => db.prepare(`UPDATE email_notifications SET status = 'sent', sent_at = ?, updated_at = ? WHERE id = ?`)
+      .bind(now, now, id)),
+    ...failedIds.map((id) => db.prepare(`UPDATE email_notifications SET status = 'pending', reserved_at = NULL, updated_at = ? WHERE id = ?`)
+      .bind(now, id)),
+  ];
+  if (statements.length) await db.batch(statements);
+  return { ok: true, sent: sentIds.length, retried: failedIds.length };
 }
 
 export async function createTask(identity: AuthIdentity, input: {
@@ -396,8 +635,50 @@ export async function updateTask(identity: AuthIdentity, taskId: string, input: 
 
 async function requireAdmin(identity: AuthIdentity) {
   const user = await currentUser(identity);
-  if (user.role !== "admin") throw new Error("Solo el administrador puede gestionar consorcios");
+  if (user.role !== "admin") throw new Error("Solo el administrador puede realizar este cambio");
   return user;
+}
+
+export async function updateMailSettings(identity: AuthIdentity, input: Partial<MailSettings>) {
+  const user = await requireAdmin(identity);
+  const current = await readMailSettings();
+  const inboxAddress = String(input.inboxAddress ?? current.inboxAddress).trim().toLocaleLowerCase("es");
+  const subjectPrefix = String(input.subjectPrefix ?? current.subjectPrefix).trim().slice(0, 40);
+  const lookbackDays = Math.min(30, Math.max(1, Number(input.lookbackDays ?? current.lookbackDays) || 7));
+  const reminderHour = Math.min(23, Math.max(0, Number(input.reminderHour ?? current.reminderHour) || 0));
+  const reminderRecipients = Array.from(new Set(
+    (Array.isArray(input.reminderRecipients) ? input.reminderRecipients : current.reminderRecipients)
+      .map((email) => String(email).trim().toLocaleLowerCase("es"))
+      .filter(Boolean),
+  ));
+  if (!emailPattern.test(inboxAddress)) throw new Error("Ingresá una casilla de correo válida");
+  if (!subjectPrefix) throw new Error("El prefijo del asunto es obligatorio");
+  if (reminderRecipients.some((email) => !emailPattern.test(email))) throw new Error("Revisá las direcciones de los recordatorios");
+  if (input.remindersEnabled && reminderRecipients.length === 0) throw new Error("Agregá al menos un destinatario para activar los recordatorios");
+
+  const now = Date.now();
+  await getDatabase().prepare(`UPDATE mail_settings SET
+      intake_enabled = ?, inbox_address = ?, subject_prefix = ?, lookback_days = ?,
+      reminders_enabled = ?, reminder_recipients = ?, notify_urgent = ?, notify_due_today = ?,
+      notify_overdue = ?, daily_summary = ?, reminder_hour = ?, timezone = ?,
+      updated_by_id = ?, updated_at = ? WHERE id = 'default'`)
+    .bind(
+      input.intakeEnabled ?? current.intakeEnabled ? 1 : 0,
+      inboxAddress,
+      subjectPrefix,
+      lookbackDays,
+      input.remindersEnabled ?? current.remindersEnabled ? 1 : 0,
+      JSON.stringify(reminderRecipients),
+      input.notifyUrgent ?? current.notifyUrgent ? 1 : 0,
+      input.notifyDueToday ?? current.notifyDueToday ? 1 : 0,
+      input.notifyOverdue ?? current.notifyOverdue ? 1 : 0,
+      input.dailySummary ?? current.dailySummary ? 1 : 0,
+      reminderHour,
+      "America/Buenos_Aires",
+      user.id,
+      now,
+    ).run();
+  return loadWorkspace(identity);
 }
 
 export async function createConsortium(identity: AuthIdentity, input: {

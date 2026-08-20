@@ -36,6 +36,13 @@
       "when": 1787249682860,
       "tag": "0004_regular_lord_hawal",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1787251857409,
+      "tag": "0005_majestic_dragon_lord",
+      "breakpoints": true
     }
   ]
 }

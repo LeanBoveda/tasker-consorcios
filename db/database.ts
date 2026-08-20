@@ -88,7 +88,45 @@ async function initializeDatabase() {
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL
     )`),
+    db.prepare(`CREATE TABLE IF NOT EXISTS mail_settings (
+      id TEXT PRIMARY KEY NOT NULL,
+      intake_enabled INTEGER NOT NULL DEFAULT 1,
+      inbox_address TEXT NOT NULL DEFAULT 'leandroboveda@gmail.com',
+      subject_prefix TEXT NOT NULL DEFAULT '[RECLAMO]',
+      lookback_days INTEGER NOT NULL DEFAULT 7,
+      reminders_enabled INTEGER NOT NULL DEFAULT 0,
+      reminder_recipients TEXT NOT NULL DEFAULT '[]',
+      notify_urgent INTEGER NOT NULL DEFAULT 1,
+      notify_due_today INTEGER NOT NULL DEFAULT 1,
+      notify_overdue INTEGER NOT NULL DEFAULT 1,
+      daily_summary INTEGER NOT NULL DEFAULT 0,
+      reminder_hour INTEGER NOT NULL DEFAULT 9,
+      timezone TEXT NOT NULL DEFAULT 'America/Buenos_Aires',
+      updated_by_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+      updated_at INTEGER NOT NULL
+    )`),
+    db.prepare(`CREATE TABLE IF NOT EXISTS email_notifications (
+      id TEXT PRIMARY KEY NOT NULL,
+      notification_key TEXT NOT NULL UNIQUE,
+      recipient_email TEXT NOT NULL,
+      type TEXT NOT NULL CHECK (type IN ('urgent', 'due_today', 'overdue', 'daily_summary')),
+      subject TEXT NOT NULL,
+      body TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'reserved', 'sent')),
+      reserved_at INTEGER,
+      sent_at INTEGER,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    )`),
   ]);
+
+  await db.prepare(`INSERT OR IGNORE INTO mail_settings
+    (id, intake_enabled, inbox_address, subject_prefix, lookback_days, reminders_enabled,
+     reminder_recipients, notify_urgent, notify_due_today, notify_overdue, daily_summary,
+     reminder_hour, timezone, updated_by_id, updated_at)
+    VALUES ('default', 1, 'leandroboveda@gmail.com', '[RECLAMO]', 7, 0,
+      '["leandroboveda@gmail.com"]', 1, 1, 1, 0, 9, 'America/Buenos_Aires', NULL, ?)`)
+    .bind(Date.now()).run();
 
   const info = await db.prepare("PRAGMA table_info(users)").all<{ name: string }>();
   const columns = new Set((info.results ?? []).map((column) => column.name));
@@ -135,6 +173,8 @@ async function initializeDatabase() {
     db.prepare("CREATE INDEX IF NOT EXISTS idx_claims_status_created ON claims (status, created_at)"),
     db.prepare("CREATE INDEX IF NOT EXISTS idx_claims_consortium_id ON claims (consortium_id)"),
     db.prepare("CREATE INDEX IF NOT EXISTS idx_claims_assigned_to_id ON claims (assigned_to_id)"),
+    db.prepare("CREATE UNIQUE INDEX IF NOT EXISTS email_notifications_key_unique ON email_notifications (notification_key)"),
+    db.prepare("CREATE INDEX IF NOT EXISTS idx_email_notifications_status_created ON email_notifications (status, created_at)"),
     db.prepare("DELETE FROM sessions WHERE expires_at <= ?").bind(Date.now()),
     db.prepare("PRAGMA optimize"),
   ]);
