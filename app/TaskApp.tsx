@@ -212,7 +212,7 @@ export default function TaskApp({ initialData }: { initialData: WorkspaceData })
             {view !== "claims" && <button className="icon-button" aria-label="Buscar" onClick={() => setSearchOpen((value) => !value)}>⌕</button>}
             <button className="icon-button notification" aria-label="Notificaciones" onClick={() => setNotice("No tenés notificaciones pendientes.")}>♢</button>
             {view === "claims" && data.currentUser.role === "admin"
-              ? <button className="primary-button" onClick={() => setEmailTestOpen(true)}><span aria-hidden="true">✉</span> Probar correo</button>
+              ? <button className="primary-button" onClick={() => window.location.reload()}><span aria-hidden="true">↻</span> Actualizar</button>
               : <button className="primary-button" onClick={() => openNewTask()}><span aria-hidden="true">＋</span> Nueva tarea</button>}
           </div>
         </header>
@@ -258,8 +258,8 @@ export default function TaskApp({ initialData }: { initialData: WorkspaceData })
           <div className="claims-view">
             <section className="email-test-banner">
               <div className="email-test-icon" aria-hidden="true">✉</div>
-              <div><span className="modal-kicker">PRUEBA INICIAL</span><h2>Ingreso automático por correo</h2><p>Esta versión simula la llegada de un email. Tasker detecta la categoría y prioridad mediante palabras clave, guarda el reclamo y crea una tarea asignada a vos.</p></div>
-              {data.currentUser.role === "admin" && <button className="primary-button" onClick={() => setEmailTestOpen(true)}>Ejecutar prueba</button>}
+              <div><span className="modal-kicker">GMAIL REAL</span><h2>leandroboveda@gmail.com</h2><p>Mandate un correo a esta dirección con un asunto que empiece con <strong>[RECLAMO]</strong>. En aproximadamente un minuto se cargará aquí y también se creará la tarea.</p><div className="gmail-test-example"><span>Asunto de ejemplo</span><code>[RECLAMO] Ascensor detenido - urgente</code></div></div>
+              {data.currentUser.role === "admin" && <div className="email-test-banner-actions"><button className="primary-button" onClick={() => window.location.reload()}>↻ Actualizar bandeja</button><button className="secondary-button" onClick={() => setEmailTestOpen(true)}>Prueba simulada</button></div>}
             </section>
             <div className="claims-summary">
               <article><strong>{data.claims.length}</strong><span>Correos procesados</span></article>
@@ -271,7 +271,7 @@ export default function TaskApp({ initialData }: { initialData: WorkspaceData })
               {data.claims.map((claim) => (
                 <article className="claim-card" key={claim.id}>
                   <div className="claim-card-main">
-                    <div className="claim-badges"><span className={`priority ${priorityLabels[claim.priority].toLowerCase()}`}>{priorityLabels[claim.priority]}</span><span className="claim-channel">✉ Email</span>{claim.isTest && <span className="claim-test">Prueba</span>}</div>
+                    <div className="claim-badges"><span className={`priority ${priorityLabels[claim.priority].toLowerCase()}`}>{priorityLabels[claim.priority]}</span><span className="claim-channel">✉ Email</span><span className={claim.isTest ? "claim-test" : "claim-live"}>{claim.isTest ? "Prueba" : "Gmail real"}</span></div>
                     <h3>{claim.subject}</h3>
                     <p className="claim-preview">{claim.body}</p>
                     <div className="claim-meta"><span>De: <strong>{claim.senderName}</strong> · {claim.senderEmail}</span><span>▦ {claim.consortiumName || "Sin consorcio"}</span><span>◷ {dateTimeLabel(claim.createdAt)}</span></div>
@@ -279,7 +279,7 @@ export default function TaskApp({ initialData }: { initialData: WorkspaceData })
                   <div className="claim-card-side"><span className="claim-category">{claimCategoryLabels[claim.category]}</span><span className={`claim-status ${claim.status}`}>{claimStatusLabels[claim.status]}</span>{claim.taskId && <button className="row-button" onClick={() => { setView("home"); setSelectedTaskId(claim.taskId); }}>Abrir tarea</button>}</div>
                 </article>
               ))}
-              {data.claims.length === 0 && <div className="claims-empty"><span aria-hidden="true">✉</span><h3>Todavía no hay reclamos</h3><p>Ejecutá el primer correo de prueba para comprobar el circuito completo.</p>{data.currentUser.role === "admin" && <button className="primary-button" onClick={() => setEmailTestOpen(true)}>Probar ahora</button>}</div>}
+              {data.claims.length === 0 && <div className="claims-empty"><span aria-hidden="true">✉</span><h3>Esperando el primer reclamo</h3><p>Enviá un correo con el asunto <strong>[RECLAMO] Tu asunto</strong> y luego actualizá esta bandeja.</p>{data.currentUser.role === "admin" && <button className="secondary-button" onClick={() => setEmailTestOpen(true)}>Usar simulación</button>}</div>}
             </div>
           </div>
         )}

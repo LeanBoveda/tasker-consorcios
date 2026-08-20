@@ -256,6 +256,69 @@ export async function createEmailClaimTest(identity: AuthIdentity, input: {
   return loadWorkspace(identity);
 }
 
+function normalizedText(value: string) {
+  return value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLocaleLowerCase("es").replace(/[^a-z0-9]+/g, " ").trim();
+}
+
+export async function ingestEmailClaim(input: {
+  externalId?: string; senderName?: string; senderEmail?: string; subject?: string; body?: string; receivedAt?: number;
+}) {
+  await ensureDatabase();
+  const externalIdValue = input.externalId?.trim().slice(0, 200) ?? "";
+  const senderEmail = input.senderEmail?.trim().toLocaleLowerCase("es").slice(0, 320) ?? "";
+  const rawSubject = input.subject?.trim().slice(0, 500) ?? "";
+  const body = input.body?.trim().slice(0, 20000) ?? "";
+  if (!externalIdValue) throw new Error("El mensaje no tiene identificador");
+  if (!senderEmail || !senderEmail.includes("@")) throw new Error("El remitente no es válido");
+  if (!/^\[reclamo\]/i.test(rawSubject)) throw new Error("El asunto debe comenzar con [RECLAMO]");
+  if (!body) throw new Error("El mensaje está vacío");
+
+  const db = getDatabase();
+  const externalId = `gmail:${externalIdValue}`;
+  const existing = await db.prepare("SELECT id, task_id FROM claims WHERE external_id = ?")
+    .bind(externalId).first<{ id: string; task_id: string | null }>();
+  if (existing) return { ok: true, duplicate: true, claimId: existing.id, taskId: existing.task_id };
+
+  const admin = await db.prepare(`SELECT id FROM users
+    WHERE role = 'admin' AND status = 'active' ORDER BY created_at LIMIT 1`).first<{ id: string }>();
+  if (!admin) throw new Error("No hay un administrador activo para asignar el reclamo");
+
+  const cleanSubject = rawSubject.replace(/^\[reclamo\]\s*/i, "").trim() || "Reclamo recibido por correo";
+  const searchable = normalizedText(`${cleanSubject} ${body}`);
+  const consortia = await db.prepare("SELECT id, name, address FROM consorcios ORDER BY length(name) DESC")
+    .all<{ id: string; name: string; address: string }>();
+  const consortium = (consortia.results ?? []).find((item) => {
+    const name = normalizedText(item.name);
+    const address = normalizedText(item.address);
+    return (name.length >= 4 && searchable.includes(name)) || (address.length >= 5 && searchable.includes(address));
+  }) ?? null;
+
+  const classification = classifyEmail(cleanSubject, body);
+  const claimId = crypto.randomUUID();
+  const taskId = crypto.randomUUID();
+  const now = Number.isFinite(input.receivedAt) && Number(input.receivedAt) > 0
+    ? Math.min(Number(input.receivedAt), Date.now()) : Date.now();
+  const senderName = input.senderName?.trim().slice(0, 300) || "Remitente sin nombre";
+  const taskDescription = `Correo recibido de ${senderName} <${senderEmail}>\n\n${body}\n\nReclamo ${claimId.slice(0, 8)} · ingresado automáticamente desde Gmail.`;
+
+  await db.batch([
+    db.prepare(`INSERT INTO tasks
+      (id, title, description, building, priority, status, due_date, consortium_id, creator_id, assignee_id, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, 'pending', NULL, ?, ?, ?, ?, ?)`)
+      .bind(taskId, cleanSubject, taskDescription, consortium?.name ?? "", classification.priority,
+        consortium?.id ?? null, admin.id, admin.id, now, now),
+    db.prepare(`INSERT INTO claims
+      (id, source, is_test, external_id, sender_name, sender_email, subject, body, category, priority, status,
+       consortium_id, task_id, created_by_id, assigned_to_id, created_at, updated_at)
+      VALUES (?, 'email', 0, ?, ?, ?, ?, ?, ?, ?, 'assigned', ?, ?, NULL, ?, ?, ?)`)
+      .bind(claimId, externalId, senderName, senderEmail, cleanSubject, body,
+        classification.category, classification.priority, consortium?.id ?? null,
+        taskId, admin.id, now, now),
+  ]);
+
+  return { ok: true, duplicate: false, claimId, taskId, category: classification.category, priority: classification.priority, consortium: consortium?.name ?? null };
+}
+
 export async function createTask(identity: AuthIdentity, input: {
   title: string; description?: string; consortiumId?: string | null; priority?: string;
   status?: string; dueDate?: string | null; assigneeId?: string | null;
