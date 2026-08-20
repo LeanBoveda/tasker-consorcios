@@ -245,6 +245,14 @@ button { font: inherit; }
 .test-mode-note > span { color: #d69e2e; }
 .test-mode-note p, .classification-help { margin: 0; font-size: 12px; line-height: 1.5; }
 .classification-help { color: #718078; }
+.gmail-script-modal { width: min(780px,100%); }
+.gmail-script-steps { display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 8px 10px; margin-bottom: 14px; padding: 13px; color: #52635c; background: #f3f8f5; border: 1px solid #dceae3; border-radius: 10px; }
+.gmail-script-steps > span { display: grid; width: 23px; height: 23px; place-items: center; color: #fff; background: var(--green); border-radius: 50%; font-size: 11px; font-weight: 800; }
+.gmail-script-steps p { margin: 0; font-size: 13px; line-height: 1.45; }
+.gmail-script-steps a { color: var(--green-dark); font-weight: 750; }
+.gmail-script-code { width: 100%; height: min(390px,42vh); padding: 14px; color: #dcefe6; background: #173329; border: 1px solid #284b3e; border-radius: 10px; outline: none; font-family: Consolas, "Courier New", monospace; font-size: 12px; line-height: 1.5; resize: vertical; tab-size: 2; }
+.gmail-script-code:focus { border-color: #64a88b; box-shadow: 0 0 0 3px rgba(20,108,76,.12); }
+.gmail-script-help { margin: 9px 0 0; color: var(--muted); font-size: 12px; line-height: 1.45; }
 .mail-settings-view { display: grid; gap: 17px; }
 .settings-card { padding: 22px; background: #fff; border: 1px solid var(--line); border-radius: 14px; box-shadow: 0 3px 12px rgba(21,41,33,.035); }
 .settings-card-intake { border-color: #cee4da; }

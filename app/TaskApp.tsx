@@ -58,6 +58,7 @@ export default function TaskApp({ initialData }: { initialData: WorkspaceData })
   });
   const [importOpen, setImportOpen] = useState(false);
   const [emailTestOpen, setEmailTestOpen] = useState(false);
+  const [gmailScript, setGmailScript] = useState<string | null>(null);
   const [mailDraft, setMailDraft] = useState<MailSettings | null>(initialData.mailSettings);
   const [newRecipient, setNewRecipient] = useState("");
   const [saving, setSaving] = useState(false);
@@ -133,6 +134,7 @@ export default function TaskApp({ initialData }: { initialData: WorkspaceData })
   }
   async function copyGmailConnection() {
     setSaving(true);
+    setNotice(null);
     try {
       const response = await fetch("/api/claims/gmail-script", { cache: "no-store" });
       const script = await response.text();
@@ -140,13 +142,31 @@ export default function TaskApp({ initialData }: { initialData: WorkspaceData })
         const payload = JSON.parse(script) as { error?: string };
         throw new Error(payload.error || "No se pudo preparar la conexión");
       }
-      await navigator.clipboard.writeText(script);
-      setNotice("Código de Gmail copiado. Pegalo en Google Apps Script.");
+      setGmailScript(script);
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : "No se pudo copiar la conexión");
+      setNotice(error instanceof Error ? error.message : "No se pudo preparar la conexión");
     } finally {
       setSaving(false);
     }
+  }
+  async function copyVisibleGmailScript() {
+    if (!gmailScript) return;
+    const textarea = document.getElementById("gmail-connection-code") as HTMLTextAreaElement | null;
+    textarea?.focus();
+    textarea?.select();
+    let copied = false;
+    try {
+      if (navigator.clipboard && document.hasFocus()) {
+        await navigator.clipboard.writeText(gmailScript);
+        copied = true;
+      }
+    } catch {
+      copied = false;
+    }
+    if (!copied) {
+      try { copied = document.execCommand("copy"); } catch { copied = false; }
+    }
+    setNotice(copied ? "Código copiado. Pegalo en Google Apps Script." : "El código quedó seleccionado. Presioná Ctrl+C para copiarlo.");
   }
   async function saveMailSettings(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -285,7 +305,7 @@ export default function TaskApp({ initialData }: { initialData: WorkspaceData })
             <button className="icon-button notification" aria-label="Notificaciones" onClick={() => setNotice("No tenés notificaciones pendientes.")}>♢</button>
             {view === "claims" && data.currentUser.role === "admin"
               ? <button className="primary-button" onClick={() => window.location.reload()}><span aria-hidden="true">↻</span> Actualizar</button>
-              : view === "mail" ? <button className="primary-button" disabled={saving} onClick={copyGmailConnection}><span aria-hidden="true">⧉</span> Copiar conexión</button>
+              : view === "mail" ? <button className="primary-button" disabled={saving} onClick={copyGmailConnection}><span aria-hidden="true">⧉</span> Ver código Gmail</button>
               : <button className="primary-button" onClick={() => openNewTask()}><span aria-hidden="true">＋</span> Nueva tarea</button>}
           </div>
         </header>
@@ -400,7 +420,7 @@ export default function TaskApp({ initialData }: { initialData: WorkspaceData })
               </div>
             </section>
 
-            <div className="settings-actions"><p>Los recordatorios usan asuntos con <strong>[TASKER]</strong>, por lo que nunca se convertirán en reclamos nuevos.</p><div><button type="button" className="secondary-button" disabled={saving} onClick={copyGmailConnection}>Copiar conexión Gmail</button><button className="primary-button" disabled={saving}>{saving ? "Guardando…" : "Guardar configuración"}</button></div></div>
+            <div className="settings-actions"><p>Los recordatorios usan asuntos con <strong>[TASKER]</strong>, por lo que nunca se convertirán en reclamos nuevos.</p><div><button type="button" className="secondary-button" disabled={saving} onClick={copyGmailConnection}>Ver código Gmail</button><button className="primary-button" disabled={saving}>{saving ? "Guardando…" : "Guardar configuración"}</button></div></div>
           </form>
         ) : null}
       </section>
@@ -529,6 +549,18 @@ export default function TaskApp({ initialData }: { initialData: WorkspaceData })
               <p className="classification-help">Para esta prueba se buscan palabras como “ascensor”, “agua”, “gas”, “expensas” y “urgente”. Más adelante podemos reemplazar estas reglas por el análisis de una IA.</p>
               <div className="modal-actions"><button type="button" className="secondary-button" onClick={() => setEmailTestOpen(false)}>Cancelar</button><button className="primary-button" disabled={saving}>{saving ? "Procesando…" : "Procesar correo"}</button></div>
             </form>
+          </section>
+        </div>
+      )}
+
+      {gmailScript && (
+        <div className="modal-backdrop elevated" onMouseDown={() => setGmailScript(null)}>
+          <section className="modal gmail-script-modal" role="dialog" aria-modal="true" aria-labelledby="gmail-script-title" onMouseDown={(event) => event.stopPropagation()}>
+            <div className="modal-header"><div><span className="modal-kicker">CONEXIÓN CON GMAIL</span><h2 id="gmail-script-title">Código para Google Apps Script</h2></div><button className="close-button" onClick={() => setGmailScript(null)} aria-label="Cerrar">×</button></div>
+            <div className="gmail-script-steps"><span>1</span><p>Abrí <a href="https://script.new" target="_blank" rel="noreferrer">Google Apps Script</a> con la cuenta que recibirá los reclamos.</p><span>2</span><p>Borrá el código anterior y pegá este bloque completo.</p><span>3</span><p>Guardá y ejecutá la función <strong>configurarTasker</strong>.</p></div>
+            <textarea id="gmail-connection-code" className="gmail-script-code" readOnly spellCheck={false} value={gmailScript} onFocus={(event) => event.currentTarget.select()} aria-label="Código de conexión con Gmail" />
+            <p className="gmail-script-help">Si el navegador no permite copiar automáticamente, hacé clic dentro del código y presioná <strong>Ctrl+A</strong> y después <strong>Ctrl+C</strong>.</p>
+            <div className="modal-actions"><button type="button" className="secondary-button" onClick={() => setGmailScript(null)}>Cerrar</button><button type="button" className="primary-button" onClick={copyVisibleGmailScript}><span aria-hidden="true">⧉</span> Seleccionar y copiar</button></div>
           </section>
         </div>
       )}
