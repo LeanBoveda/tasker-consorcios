@@ -93,6 +93,10 @@ async function initializeDatabase() {
       intake_enabled INTEGER NOT NULL DEFAULT 1,
       inbox_address TEXT NOT NULL DEFAULT 'leandroboveda@gmail.com',
       subject_prefix TEXT NOT NULL DEFAULT '[RECLAMO]',
+      accepted_patterns TEXT NOT NULL DEFAULT '["RECLAMO","SOLICITUD","PEDIDO"]',
+      ignored_subject_patterns TEXT NOT NULL DEFAULT '["[TASKER]","RESPUESTA AUTOMÁTICA","FUERA DE LA OFICINA"]',
+      blocked_senders TEXT NOT NULL DEFAULT '["no-reply","noreply"]',
+      minimum_body_length INTEGER NOT NULL DEFAULT 5,
       lookback_days INTEGER NOT NULL DEFAULT 7,
       reminders_enabled INTEGER NOT NULL DEFAULT 0,
       reminder_recipients TEXT NOT NULL DEFAULT '[]',
@@ -102,8 +106,23 @@ async function initializeDatabase() {
       daily_summary INTEGER NOT NULL DEFAULT 0,
       reminder_hour INTEGER NOT NULL DEFAULT 9,
       timezone TEXT NOT NULL DEFAULT 'America/Buenos_Aires',
+      last_sync_at INTEGER,
+      last_sync_status TEXT NOT NULL DEFAULT 'idle' CHECK (last_sync_status IN ('idle', 'ok', 'error')),
+      last_sync_detail TEXT NOT NULL DEFAULT '',
+      last_sync_processed INTEGER NOT NULL DEFAULT 0,
       updated_by_id TEXT REFERENCES users(id) ON DELETE SET NULL,
       updated_at INTEGER NOT NULL
+    )`),
+    db.prepare(`CREATE TABLE IF NOT EXISTS email_intake_events (
+      id TEXT PRIMARY KEY NOT NULL,
+      external_id TEXT NOT NULL UNIQUE,
+      sender_email TEXT NOT NULL DEFAULT '',
+      recipient_emails TEXT NOT NULL DEFAULT '',
+      subject TEXT NOT NULL DEFAULT '',
+      status TEXT NOT NULL CHECK (status IN ('accepted', 'rejected')),
+      reason TEXT NOT NULL DEFAULT '',
+      claim_id TEXT REFERENCES claims(id) ON DELETE SET NULL,
+      created_at INTEGER NOT NULL
     )`),
     db.prepare(`CREATE TABLE IF NOT EXISTS email_notifications (
       id TEXT PRIMARY KEY NOT NULL,
@@ -140,6 +159,22 @@ async function initializeDatabase() {
     if (!columns.has(column)) await db.prepare(sql).run();
   }
 
+  const mailInfo = await db.prepare("PRAGMA table_info(mail_settings)").all<{ name: string }>();
+  const mailColumns = new Set((mailInfo.results ?? []).map((column) => column.name));
+  const mailAdditions: Array<[string, string]> = [
+    ["accepted_patterns", `ALTER TABLE mail_settings ADD COLUMN accepted_patterns TEXT NOT NULL DEFAULT '["RECLAMO","SOLICITUD","PEDIDO"]'`],
+    ["ignored_subject_patterns", `ALTER TABLE mail_settings ADD COLUMN ignored_subject_patterns TEXT NOT NULL DEFAULT '["[TASKER]","RESPUESTA AUTOMÁTICA","FUERA DE LA OFICINA"]'`],
+    ["blocked_senders", `ALTER TABLE mail_settings ADD COLUMN blocked_senders TEXT NOT NULL DEFAULT '["no-reply","noreply"]'`],
+    ["minimum_body_length", "ALTER TABLE mail_settings ADD COLUMN minimum_body_length INTEGER NOT NULL DEFAULT 5"],
+    ["last_sync_at", "ALTER TABLE mail_settings ADD COLUMN last_sync_at INTEGER"],
+    ["last_sync_status", "ALTER TABLE mail_settings ADD COLUMN last_sync_status TEXT NOT NULL DEFAULT 'idle'"],
+    ["last_sync_detail", "ALTER TABLE mail_settings ADD COLUMN last_sync_detail TEXT NOT NULL DEFAULT ''"],
+    ["last_sync_processed", "ALTER TABLE mail_settings ADD COLUMN last_sync_processed INTEGER NOT NULL DEFAULT 0"],
+  ];
+  for (const [column, sql] of mailAdditions) {
+    if (!mailColumns.has(column)) await db.prepare(sql).run();
+  }
+
   const taskInfo = await db.prepare("PRAGMA table_info(tasks)").all<{ name: string }>();
   const taskColumns = new Set((taskInfo.results ?? []).map((column) => column.name));
   if (!taskColumns.has("consortium_id")) {
@@ -173,6 +208,8 @@ async function initializeDatabase() {
     db.prepare("CREATE INDEX IF NOT EXISTS idx_claims_status_created ON claims (status, created_at)"),
     db.prepare("CREATE INDEX IF NOT EXISTS idx_claims_consortium_id ON claims (consortium_id)"),
     db.prepare("CREATE INDEX IF NOT EXISTS idx_claims_assigned_to_id ON claims (assigned_to_id)"),
+    db.prepare("CREATE UNIQUE INDEX IF NOT EXISTS email_intake_events_external_id_unique ON email_intake_events (external_id)"),
+    db.prepare("CREATE INDEX IF NOT EXISTS idx_email_intake_events_status_created ON email_intake_events (status, created_at)"),
     db.prepare("CREATE UNIQUE INDEX IF NOT EXISTS email_notifications_key_unique ON email_notifications (notification_key)"),
     db.prepare("CREATE INDEX IF NOT EXISTS idx_email_notifications_status_created ON email_notifications (status, created_at)"),
     db.prepare("DELETE FROM sessions WHERE expires_at <= ?").bind(Date.now()),

@@ -61,6 +61,9 @@ export default function TaskApp({ initialData }: { initialData: WorkspaceData })
   const [gmailScript, setGmailScript] = useState<string | null>(null);
   const [mailDraft, setMailDraft] = useState<MailSettings | null>(initialData.mailSettings);
   const [newRecipient, setNewRecipient] = useState("");
+  const [newAcceptedPattern, setNewAcceptedPattern] = useState("");
+  const [newIgnoredPattern, setNewIgnoredPattern] = useState("");
+  const [newBlockedSender, setNewBlockedSender] = useState("");
   const [saving, setSaving] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
 
@@ -214,6 +217,24 @@ export default function TaskApp({ initialData }: { initialData: WorkspaceData })
     }
     setNewRecipient("");
   }
+  function addMailRule(
+    field: "acceptedPatterns" | "ignoredSubjectPatterns" | "blockedSenders",
+    value: string,
+    clear: (next: string) => void,
+  ) {
+    if (!mailDraft || !value.trim()) return;
+    const normalized = field === "blockedSenders"
+      ? value.trim().toLocaleLowerCase("es")
+      : value.trim().toLocaleUpperCase("es");
+    if (!mailDraft[field].includes(normalized)) {
+      setMailDraft({ ...mailDraft, [field]: [...mailDraft[field], normalized] });
+    }
+    clear("");
+  }
+  function removeMailRule(field: "acceptedPatterns" | "ignoredSubjectPatterns" | "blockedSenders", value: string) {
+    if (!mailDraft) return;
+    setMailDraft({ ...mailDraft, [field]: mailDraft[field].filter((item) => item !== value) });
+  }
   async function updateSelected(input: Record<string, unknown>, success = "Tarea actualizada") {
     if (selectedTask) await mutate(`/api/tasks/${selectedTask.id}`, "PATCH", input, success);
   }
@@ -351,7 +372,7 @@ export default function TaskApp({ initialData }: { initialData: WorkspaceData })
           <div className="claims-view">
             <section className="email-test-banner">
               <div className="email-test-icon" aria-hidden="true">✉</div>
-              <div><span className="modal-kicker">GMAIL REAL</span><h2>{data.mailSettings?.inboxAddress ?? "Casilla configurada"}</h2><p>Los correos cuyo asunto empiece con <strong>{data.mailSettings?.subjectPrefix ?? "[RECLAMO]"}</strong> se cargarán aquí y también crearán una tarea.</p><div className="gmail-test-example"><span>Asunto de ejemplo</span><code>{data.mailSettings?.subjectPrefix ?? "[RECLAMO]"} Ascensor detenido - urgente</code></div></div>
+              <div><span className="modal-kicker">GMAIL REAL</span><h2>{data.mailSettings?.inboxAddress ?? "Casilla configurada"}</h2><p>Se procesan los correos que comienzan con alguno de estos patrones: <strong>{data.mailSettings?.acceptedPatterns.join(", ") || "RECLAMO"}</strong>.</p><div className="gmail-test-example"><span>Asunto de ejemplo</span><code>{data.mailSettings?.acceptedPatterns[0] ?? "RECLAMO"} Ascensor detenido - urgente</code></div></div>
               {data.currentUser.role === "admin" && <div className="email-test-banner-actions"><button className="primary-button" onClick={() => setView("mail")}>Configurar correo</button><button className="secondary-button" onClick={() => window.location.reload()}>↻ Actualizar bandeja</button><button className="secondary-button" onClick={() => setEmailTestOpen(true)}>Prueba simulada</button></div>}
             </section>
             <div className="claims-summary">
@@ -384,11 +405,28 @@ export default function TaskApp({ initialData }: { initialData: WorkspaceData })
               </div>
               <div className="settings-form-grid">
                 <label>Casilla que se debe leer<input type="email" required value={mailDraft.inboxAddress} onChange={(event) => setMailDraft({ ...mailDraft, inboxAddress: event.target.value })} placeholder="administracion@gmail.com" /></label>
-                <label>Prefijo obligatorio del asunto<input required value={mailDraft.subjectPrefix} onChange={(event) => setMailDraft({ ...mailDraft, subjectPrefix: event.target.value })} placeholder="[RECLAMO]" /></label>
                 <label>Buscar correos de los últimos<select value={mailDraft.lookbackDays} onChange={(event) => setMailDraft({ ...mailDraft, lookbackDays: Number(event.target.value) })}><option value={1}>1 día</option><option value={3}>3 días</option><option value={7}>7 días</option><option value={14}>14 días</option><option value={30}>30 días</option></select></label>
-                <div className="connection-status"><span className={`status-dot ${mailDraft.intakeEnabled ? "" : "paused"}`} /><div><strong>{mailDraft.intakeEnabled ? "Recepción activa" : "Recepción pausada"}</strong><small>La consulta se ejecuta aproximadamente cada minuto.</small></div></div>
+                <label>Contenido mínimo<select value={mailDraft.minimumBodyLength} onChange={(event) => setMailDraft({ ...mailDraft, minimumBodyLength: Number(event.target.value) })}><option value={0}>Sin mínimo</option><option value={5}>5 caracteres</option><option value={10}>10 caracteres</option><option value={20}>20 caracteres</option><option value={50}>50 caracteres</option></select></label>
+                <div className={`connection-status ${mailDraft.lastSyncStatus}`}><span className={`status-dot ${!mailDraft.intakeEnabled ? "paused" : mailDraft.lastSyncStatus === "error" ? "error" : ""}`} /><div><strong>{!mailDraft.intakeEnabled ? "Recepción pausada" : mailDraft.lastSyncStatus === "error" ? "Error de sincronización" : mailDraft.lastSyncAt ? "Gmail conectado" : "Esperando conexión"}</strong><small>{mailDraft.lastSyncAt ? `${dateTimeLabel(mailDraft.lastSyncAt)} · ${mailDraft.lastSyncDetail || "Sin correos nuevos"}` : "Ejecutá configurarTasker en Gmail."}</small></div></div>
               </div>
-              <div className="settings-note"><span aria-hidden="true">i</span><p>Si cambiás a otra cuenta de Gmail, guardá primero y volvé a usar <strong>Copiar conexión</strong> desde esa cuenta para autorizarla. Si solo cambiás un alias de la misma cuenta, la conexión se actualiza sola.</p></div>
+              <div className="mail-rules-grid">
+                <div className="mail-rule-card">
+                  <div><h3>Patrones aceptados</h3><p>El asunto debe comenzar con uno de estos textos.</p></div>
+                  <div className="rule-chips">{mailDraft.acceptedPatterns.map((pattern) => <span className="accepted" key={pattern}>{pattern}<button type="button" disabled={mailDraft.acceptedPatterns.length === 1} aria-label={`Quitar ${pattern}`} onClick={() => removeMailRule("acceptedPatterns", pattern)}>×</button></span>)}</div>
+                  <div className="rule-input"><input value={newAcceptedPattern} onChange={(event) => setNewAcceptedPattern(event.target.value)} placeholder="Ej. CONSULTA" onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); addMailRule("acceptedPatterns", newAcceptedPattern, setNewAcceptedPattern); } }} /><button type="button" onClick={() => addMailRule("acceptedPatterns", newAcceptedPattern, setNewAcceptedPattern)}>Agregar</button></div>
+                </div>
+                <div className="mail-rule-card">
+                  <div><h3>Asuntos ignorados</h3><p>No se crearán tareas cuando el asunto empiece así.</p></div>
+                  <div className="rule-chips">{mailDraft.ignoredSubjectPatterns.map((pattern) => <span className="ignored" key={pattern}>{pattern}<button type="button" aria-label={`Quitar ${pattern}`} onClick={() => removeMailRule("ignoredSubjectPatterns", pattern)}>×</button></span>)}</div>
+                  <div className="rule-input"><input value={newIgnoredPattern} onChange={(event) => setNewIgnoredPattern(event.target.value)} placeholder="Ej. NEWSLETTER" onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); addMailRule("ignoredSubjectPatterns", newIgnoredPattern, setNewIgnoredPattern); } }} /><button type="button" onClick={() => addMailRule("ignoredSubjectPatterns", newIgnoredPattern, setNewIgnoredPattern)}>Agregar</button></div>
+                </div>
+                <div className="mail-rule-card">
+                  <div><h3>Remitentes bloqueados</h3><p>Podés bloquear una dirección, dominio o fragmento.</p></div>
+                  <div className="rule-chips">{mailDraft.blockedSenders.map((pattern) => <span className="blocked" key={pattern}>{pattern}<button type="button" aria-label={`Quitar ${pattern}`} onClick={() => removeMailRule("blockedSenders", pattern)}>×</button></span>)}</div>
+                  <div className="rule-input"><input value={newBlockedSender} onChange={(event) => setNewBlockedSender(event.target.value)} placeholder="Ej. newsletter@" onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); addMailRule("blockedSenders", newBlockedSender, setNewBlockedSender); } }} /><button type="button" onClick={() => addMailRule("blockedSenders", newBlockedSender, setNewBlockedSender)}>Agregar</button></div>
+                </div>
+              </div>
+              <div className="settings-note"><span aria-hidden="true">i</span><p>También se rechazan automáticamente respuestas automáticas y correos masivos. Si cambiás de cuenta, guardá y volvé a usar <strong>Ver código Gmail</strong> desde la nueva casilla.</p></div>
             </section>
 
             <section className="settings-card">
@@ -417,6 +455,14 @@ export default function TaskApp({ initialData }: { initialData: WorkspaceData })
                 </div>
                 <div className="recipient-chips">{mailDraft.reminderRecipients.map((email) => <span key={email}>{email}<button type="button" aria-label={`Quitar ${email}`} onClick={() => toggleRecipient(email)}>×</button></span>)}</div>
                 <div className="add-recipient"><input type="email" value={newRecipient} onChange={(event) => setNewRecipient(event.target.value)} placeholder="otro@email.com" onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); addRecipient(); } }} /><button type="button" className="secondary-button" onClick={addRecipient}>Agregar destinatario</button></div>
+              </div>
+            </section>
+
+            <section className="settings-card mail-log-card">
+              <div className="settings-card-heading compact"><div><span className="settings-icon log" aria-hidden="true">≡</span><div><span className="modal-kicker">CONTROL</span><h2>Últimos correos evaluados</h2><p>Podés comprobar cuáles ingresaron y por qué se rechazó cada mensaje.</p></div></div><button type="button" className="secondary-button" onClick={() => window.location.reload()}>↻ Actualizar</button></div>
+              <div className="mail-event-list">
+                {data.mailEvents.map((event) => <article className="mail-event-row" key={event.id}><span className={`mail-event-status ${event.status}`}>{event.status === "accepted" ? "Aceptado" : "Rechazado"}</span><div><strong>{event.subject || "Sin asunto"}</strong><span>{event.senderEmail || "Remitente desconocido"}</span></div><p>{event.reason}</p><time>{dateTimeLabel(event.createdAt)}</time></article>)}
+                {data.mailEvents.length === 0 && <p className="empty-mail-events">Todavía no hay correos evaluados con las nuevas reglas.</p>}
               </div>
             </section>
 

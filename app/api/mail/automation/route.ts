@@ -2,6 +2,7 @@ import { env } from "cloudflare:workers";
 import {
   completeEmailNotifications,
   getEmailAutomationConfiguration,
+  recordEmailSync,
   reserveEmailNotifications,
 } from "@/db/task-store";
 
@@ -23,10 +24,14 @@ export async function POST(request: Request) {
     return Response.json({ error: "Conexión de correo no autorizada" }, { status: 401 });
   }
   try {
-    const input = await request.json() as { action?: string; sentIds?: unknown; failedIds?: unknown };
+    const input = await request.json() as {
+      action?: string; sentIds?: unknown; failedIds?: unknown;
+      status?: string; detail?: string; processedCount?: number;
+    };
     if (input.action === "configuration") return Response.json(await getEmailAutomationConfiguration());
     if (input.action === "reminders") return Response.json(await reserveEmailNotifications());
     if (input.action === "acknowledge") return Response.json(await completeEmailNotifications(input));
+    if (input.action === "sync-status") return Response.json(await recordEmailSync(input));
     return Response.json({ error: "Acción de automatización desconocida" }, { status: 400 });
   } catch (error) {
     return Response.json({ error: error instanceof Error ? error.message : "No se pudo ejecutar la automatización" }, { status: 400 });

@@ -46,8 +46,14 @@ function sincronizarTasker() {
   if (!lock.tryLock(1000)) return;
   try {
     const config = taskerRequest("/api/mail/automation", { action: "configuration" });
-    if (config.intakeEnabled) procesarReclamosTasker(config);
+    const stats = config.intakeEnabled ? procesarReclamosTasker(config) : { processedCount: 0, accepted: 0, rejected: 0 };
     if (config.remindersEnabled) enviarRecordatoriosTasker();
+    taskerRequest("/api/mail/automation", { action: "sync-status", status: "ok",
+      processedCount: stats.processedCount,
+      detail: stats.processedCount ? stats.accepted + " aceptados · " + stats.rejected + " rechazados" : "Sin correos nuevos" });
+  } catch (error) {
+    try { taskerRequest("/api/mail/automation", { action: "sync-status", status: "error", detail: String(error), processedCount: 0 }); } catch (_) {}
+    throw error;
   } finally {
     lock.releaseLock();
   }
@@ -56,21 +62,29 @@ function sincronizarTasker() {
 function procesarReclamosTasker(config) {
   const label = GmailApp.getUserLabelByName(PROCESSED_LABEL) || GmailApp.createLabel(PROCESSED_LABEL);
   const safeAddress = String(config.inboxAddress).replace(/"/g, "");
-  const safePrefix = String(config.subjectPrefix).replace(/"/g, "");
-  const query = \`to:"\${safeAddress}" subject:"\${safePrefix}" newer_than:\${config.lookbackDays}d -label:\${PROCESSED_LABEL}\`;
+  const patterns = (config.acceptedPatterns || []).map((value) => String(value).trim()).filter(Boolean);
+  if (!patterns.length) return { processedCount: 0, accepted: 0, rejected: 0 };
+  const subjectQuery = patterns.map((value) => 'subject:"' + value.replace(/"/g, "") + '"').join(" OR ");
+  const query = \`to:"\${safeAddress}" newer_than:\${config.lookbackDays}d -label:\${PROCESSED_LABEL} {\${subjectQuery}}\`;
   const threads = GmailApp.search(query, 0, 20);
+  const stats = { processedCount: 0, accepted: 0, rejected: 0 };
   threads.forEach((thread) => {
     let completed = true;
     thread.getMessages().forEach((message) => {
-      if (!message.getSubject().trim().toLowerCase().startsWith(String(config.subjectPrefix).toLowerCase())) return;
+      const subject = message.getSubject().trim();
+      if (!patterns.some((pattern) => subject.toLowerCase().startsWith(pattern.toLowerCase()))) return;
       const from = message.getFrom();
       const emailMatch = from.match(/<([^>]+)>/);
       const senderEmail = emailMatch ? emailMatch[1] : from;
       const senderName = emailMatch ? from.replace(/<[^>]+>/, "").replace(/^"|"$/g, "").trim() : from;
       try {
-        taskerRequest("/api/claims/email-intake", { externalId: message.getId(), senderName, senderEmail,
-          recipientEmails: message.getTo(), subject: message.getSubject(), body: message.getPlainBody(),
+        const headers = message.getRawContent().split(/\\r?\\n\\r?\\n/, 1)[0];
+        const isAutomatic = /^Auto-Submitted:\\s*(?!no\\b)/im.test(headers) || /^Precedence:\\s*(bulk|junk|list)/im.test(headers);
+        const result = taskerRequest("/api/claims/email-intake", { externalId: message.getId(), senderName, senderEmail,
+          recipientEmails: message.getTo(), subject, body: message.getPlainBody(), isAutomatic,
           receivedAt: message.getDate().getTime() });
+        stats.processedCount += 1;
+        if (result.accepted) stats.accepted += 1; else stats.rejected += 1;
       } catch (error) {
         completed = false;
         console.error(error);
@@ -78,6 +92,7 @@ function procesarReclamosTasker(config) {
     });
     if (completed) thread.addLabel(label);
   });
+  return stats;
 }
 
 function enviarRecordatoriosTasker() {

@@ -60,6 +60,10 @@ export type MailSettings = {
   intakeEnabled: boolean;
   inboxAddress: string;
   subjectPrefix: string;
+  acceptedPatterns: string[];
+  ignoredSubjectPatterns: string[];
+  blockedSenders: string[];
+  minimumBodyLength: number;
   lookbackDays: number;
   remindersEnabled: boolean;
   reminderRecipients: string[];
@@ -69,7 +73,21 @@ export type MailSettings = {
   dailySummary: boolean;
   reminderHour: number;
   timezone: string;
+  lastSyncAt: number | null;
+  lastSyncStatus: "idle" | "ok" | "error";
+  lastSyncDetail: string;
+  lastSyncProcessed: number;
   updatedAt: number;
+};
+export type MailIntakeEvent = {
+  id: string;
+  senderEmail: string;
+  recipientEmails: string;
+  subject: string;
+  status: "accepted" | "rejected";
+  reason: string;
+  claimId: string | null;
+  createdAt: number;
 };
 export type WorkspaceData = {
   currentUser: AppUser;
@@ -78,6 +96,7 @@ export type WorkspaceData = {
   tasks: TaskItem[];
   claims: ClaimItem[];
   mailSettings: MailSettings | null;
+  mailEvents: MailIntakeEvent[];
 };
 
 type TaskRow = {
@@ -103,6 +122,10 @@ type MailSettingsRow = {
   intake_enabled: number;
   inbox_address: string;
   subject_prefix: string;
+  accepted_patterns: string;
+  ignored_subject_patterns: string;
+  blocked_senders: string;
+  minimum_body_length: number;
   lookback_days: number;
   reminders_enabled: number;
   reminder_recipients: string;
@@ -112,6 +135,10 @@ type MailSettingsRow = {
   daily_summary: number;
   reminder_hour: number;
   timezone: string;
+  last_sync_at: number | null;
+  last_sync_status: MailSettings["lastSyncStatus"];
+  last_sync_detail: string;
+  last_sync_processed: number;
   updated_at: number;
 };
 
@@ -127,11 +154,25 @@ function parseRecipientList(value: string): string[] {
   }
 }
 
+function parseStringList(value: string): string[] {
+  try {
+    const parsed = JSON.parse(value);
+    if (!Array.isArray(parsed)) return [];
+    return Array.from(new Set(parsed.map((item) => String(item).trim()).filter(Boolean)));
+  } catch {
+    return [];
+  }
+}
+
 function mapMailSettings(row: MailSettingsRow): MailSettings {
   return {
     intakeEnabled: Boolean(row.intake_enabled),
     inboxAddress: row.inbox_address,
     subjectPrefix: row.subject_prefix,
+    acceptedPatterns: parseStringList(row.accepted_patterns),
+    ignoredSubjectPatterns: parseStringList(row.ignored_subject_patterns),
+    blockedSenders: parseStringList(row.blocked_senders),
+    minimumBodyLength: row.minimum_body_length,
     lookbackDays: row.lookback_days,
     remindersEnabled: Boolean(row.reminders_enabled),
     reminderRecipients: parseRecipientList(row.reminder_recipients),
@@ -141,14 +182,20 @@ function mapMailSettings(row: MailSettingsRow): MailSettings {
     dailySummary: Boolean(row.daily_summary),
     reminderHour: row.reminder_hour,
     timezone: row.timezone,
+    lastSyncAt: row.last_sync_at,
+    lastSyncStatus: row.last_sync_status,
+    lastSyncDetail: row.last_sync_detail,
+    lastSyncProcessed: row.last_sync_processed,
     updatedAt: row.updated_at,
   };
 }
 
 async function readMailSettings(): Promise<MailSettings> {
   const row = await getDatabase().prepare(`SELECT intake_enabled, inbox_address, subject_prefix,
+      accepted_patterns, ignored_subject_patterns, blocked_senders, minimum_body_length,
       lookback_days, reminders_enabled, reminder_recipients, notify_urgent, notify_due_today,
-      notify_overdue, daily_summary, reminder_hour, timezone, updated_at
+      notify_overdue, daily_summary, reminder_hour, timezone, last_sync_at, last_sync_status,
+      last_sync_detail, last_sync_processed, updated_at
     FROM mail_settings WHERE id = 'default'`).first<MailSettingsRow>();
   if (!row) throw new Error("No se encontró la configuración de correo");
   return mapMailSettings(row);
@@ -205,6 +252,14 @@ export async function loadWorkspace(identity: AuthIdentity): Promise<WorkspaceDa
       LEFT JOIN users assignee ON assignee.id = r.assigned_to_id
       WHERE r.assigned_to_id = ?
       ORDER BY r.created_at DESC`).bind(user.id).all<ClaimRow>();
+  const mailEvents = user.role === "admin"
+    ? (await db.prepare(`SELECT id, sender_email, recipient_emails, subject, status, reason,
+        claim_id, created_at FROM email_intake_events ORDER BY created_at DESC LIMIT 25`)
+      .all<{
+        id: string; sender_email: string; recipient_emails: string; subject: string;
+        status: MailIntakeEvent["status"]; reason: string; claim_id: string | null; created_at: number;
+      }>()).results ?? []
+    : [];
   let comments: CommentRow[] = [];
   if (taskRows.length) {
     const placeholders = taskRows.map(() => "?").join(",");
@@ -263,6 +318,16 @@ export async function loadWorkspace(identity: AuthIdentity): Promise<WorkspaceDa
       updatedAt: claim.updated_at,
     })),
     mailSettings: user.role === "admin" ? await readMailSettings() : null,
+    mailEvents: mailEvents.map((event) => ({
+      id: event.id,
+      senderEmail: event.sender_email,
+      recipientEmails: event.recipient_emails,
+      subject: event.subject,
+      status: event.status,
+      reason: event.reason,
+      claimId: event.claim_id,
+      createdAt: event.created_at,
+    })),
   };
 }
 
@@ -343,35 +408,77 @@ function prefixPattern(prefix: string) {
 
 export async function ingestEmailClaim(input: {
   externalId?: string; senderName?: string; senderEmail?: string; recipientEmails?: string;
-  subject?: string; body?: string; receivedAt?: number;
+  subject?: string; body?: string; receivedAt?: number; isAutomatic?: boolean;
 }) {
   await ensureDatabase();
   const mailSettings = await readMailSettings();
-  if (!mailSettings.intakeEnabled) throw new Error("La recepción automática está pausada");
   const externalIdValue = input.externalId?.trim().slice(0, 200) ?? "";
   const senderEmail = input.senderEmail?.trim().toLocaleLowerCase("es").slice(0, 320) ?? "";
   const rawSubject = input.subject?.trim().slice(0, 500) ?? "";
   const body = input.body?.trim().slice(0, 20000) ?? "";
   if (!externalIdValue) throw new Error("El mensaje no tiene identificador");
-  if (!senderEmail || !senderEmail.includes("@")) throw new Error("El remitente no es válido");
-  const requiredPrefix = prefixPattern(mailSettings.subjectPrefix);
-  if (!requiredPrefix.test(rawSubject)) throw new Error(`El asunto debe comenzar con ${mailSettings.subjectPrefix}`);
-  if (input.recipientEmails && !input.recipientEmails.toLocaleLowerCase("es").includes(mailSettings.inboxAddress.toLocaleLowerCase("es"))) {
-    throw new Error("El correo no fue enviado a la casilla configurada");
-  }
-  if (!body) throw new Error("El mensaje está vacío");
 
   const db = getDatabase();
   const externalId = `gmail:${externalIdValue}`;
+  const existingEvent = await db.prepare(`SELECT status, reason, claim_id FROM email_intake_events WHERE external_id = ?`)
+    .bind(externalId).first<{ status: MailIntakeEvent["status"]; reason: string; claim_id: string | null }>();
+  if (existingEvent) return {
+    ok: true,
+    accepted: existingEvent.status === "accepted",
+    duplicate: true,
+    reason: existingEvent.reason,
+    claimId: existingEvent.claim_id,
+  };
+
   const existing = await db.prepare("SELECT id, task_id FROM claims WHERE external_id = ?")
     .bind(externalId).first<{ id: string; task_id: string | null }>();
-  if (existing) return { ok: true, duplicate: true, claimId: existing.id, taskId: existing.task_id };
+  if (existing) {
+    await db.prepare(`INSERT OR IGNORE INTO email_intake_events
+      (id, external_id, sender_email, recipient_emails, subject, status, reason, claim_id, created_at)
+      VALUES (?, ?, ?, ?, ?, 'accepted', 'Procesado anteriormente', ?, ?)`)
+      .bind(crypto.randomUUID(), externalId, senderEmail, input.recipientEmails?.slice(0, 1000) ?? "",
+        rawSubject, existing.id, Date.now()).run();
+    return { ok: true, accepted: true, duplicate: true, claimId: existing.id, taskId: existing.task_id };
+  }
+
+  const normalizedSubject = rawSubject.toLocaleLowerCase("es");
+  const matchingPattern = [...mailSettings.acceptedPatterns]
+    .sort((left, right) => right.length - left.length)
+    .find((pattern) => prefixPattern(pattern).test(rawSubject));
+  const ignoredPattern = mailSettings.ignoredSubjectPatterns.find((pattern) =>
+    normalizedSubject.startsWith(pattern.toLocaleLowerCase("es"))
+  );
+  const blockedSender = mailSettings.blockedSenders.find((pattern) =>
+    senderEmail.includes(pattern.toLocaleLowerCase("es"))
+  );
+  let rejectionReason = "";
+  if (!mailSettings.intakeEnabled) rejectionReason = "La recepción automática está pausada";
+  else if (!senderEmail || !emailPattern.test(senderEmail)) rejectionReason = "El remitente no tiene un email válido";
+  else if (input.isAutomatic) rejectionReason = "Respuesta automática o correo masivo";
+  else if (ignoredPattern) rejectionReason = `Asunto ignorado por la regla “${ignoredPattern}”`;
+  else if (blockedSender) rejectionReason = `Remitente bloqueado por la regla “${blockedSender}”`;
+  else if (!matchingPattern) rejectionReason = "El asunto no comienza con un patrón aceptado";
+  else if (input.recipientEmails && !input.recipientEmails.toLocaleLowerCase("es").includes(mailSettings.inboxAddress.toLocaleLowerCase("es"))) {
+    rejectionReason = "El correo no fue enviado a la casilla configurada";
+  } else if (body.length < mailSettings.minimumBodyLength) {
+    rejectionReason = `El mensaje tiene menos de ${mailSettings.minimumBodyLength} caracteres`;
+  }
+
+  if (rejectionReason) {
+    await db.prepare(`INSERT OR IGNORE INTO email_intake_events
+      (id, external_id, sender_email, recipient_emails, subject, status, reason, claim_id, created_at)
+      VALUES (?, ?, ?, ?, ?, 'rejected', ?, NULL, ?)`)
+      .bind(crypto.randomUUID(), externalId, senderEmail, input.recipientEmails?.slice(0, 1000) ?? "",
+        rawSubject, rejectionReason, Date.now()).run();
+    return { ok: true, accepted: false, duplicate: false, reason: rejectionReason };
+  }
 
   const admin = await db.prepare(`SELECT id FROM users
     WHERE role = 'admin' AND status = 'active' ORDER BY created_at LIMIT 1`).first<{ id: string }>();
   if (!admin) throw new Error("No hay un administrador activo para asignar el reclamo");
 
-  const cleanSubject = rawSubject.replace(requiredPrefix, "").trim() || "Reclamo recibido por correo";
+  const requiredPrefix = prefixPattern(matchingPattern!);
+  const cleanSubject = rawSubject.replace(requiredPrefix, "").replace(/^[:\-–—\s]+/, "").trim() || `${matchingPattern} recibido por correo`;
   const searchable = normalizedText(`${cleanSubject} ${body}`);
   const consortia = await db.prepare("SELECT id, name, address FROM consorcios ORDER BY length(name) DESC")
     .all<{ id: string; name: string; address: string }>();
@@ -402,9 +509,14 @@ export async function ingestEmailClaim(input: {
       .bind(claimId, externalId, senderName, senderEmail, cleanSubject, body,
         classification.category, classification.priority, consortium?.id ?? null,
         taskId, admin.id, now, now),
+    db.prepare(`INSERT INTO email_intake_events
+      (id, external_id, sender_email, recipient_emails, subject, status, reason, claim_id, created_at)
+      VALUES (?, ?, ?, ?, ?, 'accepted', ?, ?, ?)`)
+      .bind(crypto.randomUUID(), externalId, senderEmail, input.recipientEmails?.slice(0, 1000) ?? "",
+        rawSubject, `Aceptado por el patrón “${matchingPattern}”`, claimId, Date.now()),
   ]);
 
-  return { ok: true, duplicate: false, claimId, taskId, category: classification.category, priority: classification.priority, consortium: consortium?.name ?? null };
+  return { ok: true, accepted: true, duplicate: false, claimId, taskId, category: classification.category, priority: classification.priority, consortium: consortium?.name ?? null };
 }
 
 export async function getEmailAutomationConfiguration() {
@@ -413,10 +525,23 @@ export async function getEmailAutomationConfiguration() {
   return {
     intakeEnabled: settings.intakeEnabled,
     inboxAddress: settings.inboxAddress,
-    subjectPrefix: settings.subjectPrefix,
+    acceptedPatterns: settings.acceptedPatterns,
     lookbackDays: settings.lookbackDays,
     remindersEnabled: settings.remindersEnabled && settings.reminderRecipients.length > 0,
   };
+}
+
+export async function recordEmailSync(input: {
+  status?: string; detail?: string; processedCount?: number;
+}) {
+  await ensureDatabase();
+  const status = input.status === "error" ? "error" : "ok";
+  const detail = String(input.detail ?? "").trim().slice(0, 500);
+  const processedCount = Math.min(500, Math.max(0, Number(input.processedCount) || 0));
+  await getDatabase().prepare(`UPDATE mail_settings SET last_sync_at = ?, last_sync_status = ?,
+    last_sync_detail = ?, last_sync_processed = ? WHERE id = 'default'`)
+    .bind(Date.now(), status, detail, processedCount).run();
+  return { ok: true };
 }
 
 type EmailNotificationRow = {
@@ -643,7 +768,16 @@ export async function updateMailSettings(identity: AuthIdentity, input: Partial<
   const user = await requireAdmin(identity);
   const current = await readMailSettings();
   const inboxAddress = String(input.inboxAddress ?? current.inboxAddress).trim().toLocaleLowerCase("es");
-  const subjectPrefix = String(input.subjectPrefix ?? current.subjectPrefix).trim().slice(0, 40);
+  const normalizeList = (value: unknown, fallback: string[], mode: "upper" | "lower") => Array.from(new Set(
+    (Array.isArray(value) ? value : fallback)
+      .map((item) => String(item).trim().slice(0, 80))
+      .filter(Boolean)
+      .map((item) => mode === "upper" ? item.toLocaleUpperCase("es") : item.toLocaleLowerCase("es")),
+  )).slice(0, 20);
+  const acceptedPatterns = normalizeList(input.acceptedPatterns, current.acceptedPatterns, "upper");
+  const ignoredSubjectPatterns = normalizeList(input.ignoredSubjectPatterns, current.ignoredSubjectPatterns, "upper");
+  const blockedSenders = normalizeList(input.blockedSenders, current.blockedSenders, "lower");
+  const minimumBodyLength = Math.min(500, Math.max(0, Number(input.minimumBodyLength ?? current.minimumBodyLength) || 0));
   const lookbackDays = Math.min(30, Math.max(1, Number(input.lookbackDays ?? current.lookbackDays) || 7));
   const reminderHour = Math.min(23, Math.max(0, Number(input.reminderHour ?? current.reminderHour) || 0));
   const reminderRecipients = Array.from(new Set(
@@ -652,20 +786,25 @@ export async function updateMailSettings(identity: AuthIdentity, input: Partial<
       .filter(Boolean),
   ));
   if (!emailPattern.test(inboxAddress)) throw new Error("Ingresá una casilla de correo válida");
-  if (!subjectPrefix) throw new Error("El prefijo del asunto es obligatorio");
+  if (!acceptedPatterns.length) throw new Error("Agregá al menos un patrón de asunto aceptado");
   if (reminderRecipients.some((email) => !emailPattern.test(email))) throw new Error("Revisá las direcciones de los recordatorios");
   if (input.remindersEnabled && reminderRecipients.length === 0) throw new Error("Agregá al menos un destinatario para activar los recordatorios");
 
   const now = Date.now();
   await getDatabase().prepare(`UPDATE mail_settings SET
-      intake_enabled = ?, inbox_address = ?, subject_prefix = ?, lookback_days = ?,
+      intake_enabled = ?, inbox_address = ?, subject_prefix = ?, accepted_patterns = ?,
+      ignored_subject_patterns = ?, blocked_senders = ?, minimum_body_length = ?, lookback_days = ?,
       reminders_enabled = ?, reminder_recipients = ?, notify_urgent = ?, notify_due_today = ?,
       notify_overdue = ?, daily_summary = ?, reminder_hour = ?, timezone = ?,
       updated_by_id = ?, updated_at = ? WHERE id = 'default'`)
     .bind(
       input.intakeEnabled ?? current.intakeEnabled ? 1 : 0,
       inboxAddress,
-      subjectPrefix,
+      acceptedPatterns[0],
+      JSON.stringify(acceptedPatterns),
+      JSON.stringify(ignoredSubjectPatterns),
+      JSON.stringify(blockedSenders),
+      minimumBodyLength,
       lookbackDays,
       input.remindersEnabled ?? current.remindersEnabled ? 1 : 0,
       JSON.stringify(reminderRecipients),
