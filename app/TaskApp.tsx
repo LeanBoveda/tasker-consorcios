@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useMemo, useState } from "react";
+import { DragEvent, FormEvent, useMemo, useRef, useState } from "react";
 import type { MailSettings, TaskItem, WorkspaceData } from "@/db/task-store";
 import UserImport from "./UserImport";
 
@@ -48,6 +48,9 @@ export default function TaskApp({ initialData }: { initialData: WorkspaceData })
   const [newTaskOpen, setNewTaskOpen] = useState(false);
   const [newTaskStatus, setNewTaskStatus] = useState<TaskItem["status"]>("pending");
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
+  const [draggedTaskId, setDraggedTaskId] = useState<string | null>(null);
+  const [dropTargetStatus, setDropTargetStatus] = useState<TaskItem["status"] | null>(null);
+  const suppressTaskClick = useRef(false);
   const [teamOpen, setTeamOpen] = useState(false);
   const [userDraft, setUserDraft] = useState<{ id: string | null; name: string; username: string; role: "admin" | "member"; password: string }>({
     id: null, name: "", username: "", role: "member", password: "",
@@ -112,6 +115,69 @@ export default function TaskApp({ initialData }: { initialData: WorkspaceData })
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "Ocurrió un error");
       return false;
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  function startTaskDrag(event: DragEvent<HTMLButtonElement>, task: TaskItem) {
+    if (saving) {
+      event.preventDefault();
+      return;
+    }
+    suppressTaskClick.current = true;
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData("text/task-id", task.id);
+    setDraggedTaskId(task.id);
+  }
+
+  function finishTaskDrag() {
+    setDraggedTaskId(null);
+    setDropTargetStatus(null);
+    window.setTimeout(() => { suppressTaskClick.current = false; }, 0);
+  }
+
+  function allowTaskDrop(event: DragEvent<HTMLElement>, status: TaskItem["status"]) {
+    if (!draggedTaskId) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "move";
+    if (dropTargetStatus !== status) setDropTargetStatus(status);
+  }
+
+  async function dropTask(event: DragEvent<HTMLElement>, status: TaskItem["status"]) {
+    event.preventDefault();
+    const taskId = event.dataTransfer.getData("text/task-id") || draggedTaskId;
+    setDraggedTaskId(null);
+    setDropTargetStatus(null);
+    window.setTimeout(() => { suppressTaskClick.current = false; }, 0);
+    if (!taskId) return;
+    const task = data.tasks.find((item) => item.id === taskId);
+    if (!task || task.status === status) return;
+
+    const previousData = data;
+    const nextLabel = columns.find((column) => column.key === status)?.label ?? "la nueva columna";
+    setSaving(true);
+    setNotice(null);
+    setData((current) => ({
+      ...current,
+      tasks: current.tasks.map((item) => item.id === taskId
+        ? { ...item, status, updatedAt: Date.now() }
+        : item),
+    }));
+    try {
+      const response = await fetch(`/api/tasks/${taskId}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ status }),
+      });
+      const payload = await response.json() as WorkspaceData & { error?: string };
+      if (!response.ok) throw new Error(payload.error ?? "No se pudo mover la tarea");
+      setData(payload);
+      setNotice(`Tarea movida a ${nextLabel}`);
+      window.setTimeout(() => setNotice(null), 3200);
+    } catch (error) {
+      setData(previousData);
+      setNotice(error instanceof Error ? error.message : "No se pudo mover la tarea");
     } finally {
       setSaving(false);
     }
@@ -340,7 +406,7 @@ export default function TaskApp({ initialData }: { initialData: WorkspaceData })
         </div>
 
         <div className="board-heading">
-          <div><h2>{view === "mine" ? "Mis tareas" : "Tablero de tareas"}</h2><p>{visibleTasks.length} tareas visibles · {isAdmin ? "como administrador, podés ver todas las tareas del equipo." : "las privadas no se comparten con el resto del equipo."}</p></div>
+          <div><h2>{view === "mine" ? "Mis tareas" : "Tablero de tareas"}</h2><p>{visibleTasks.length} tareas visibles · Arrastrá una tarjeta para cambiar su estado. En celular, abrila y usá el campo Estado.</p></div>
           <div className="board-actions">
             <select className="filter-button" aria-label="Filtrar por persona" value={assigneeFilter} onChange={(event) => setAssigneeFilter(event.target.value)}><option value="all">Todas las personas</option>{data.users.map((user) => <option value={user.id} key={user.id}>{user.name}</option>)}</select>
             <select className="filter-button" aria-label="Filtrar por consorcio" value={buildingFilter} onChange={(event) => setBuildingFilter(event.target.value)}><option value="all">Todos los consorcios</option>{buildings.map((building) => <option value={building} key={building}>{building}</option>)}</select>
@@ -352,11 +418,26 @@ export default function TaskApp({ initialData }: { initialData: WorkspaceData })
           {columns.map((column) => {
             const tasks = visibleTasks.filter((task) => task.status === column.key);
             return (
-              <section className="kanban-column" key={column.key}>
-                <div className="column-header"><span className={`column-dot ${column.tone}`} /><h3>{column.label}</h3><span className="column-count">{tasks.length}</span></div>
+              <section
+                className={`kanban-column ${dropTargetStatus === column.key ? "drop-target" : ""}`}
+                key={column.key}
+                onDragEnter={(event) => allowTaskDrop(event, column.key)}
+                onDragOver={(event) => allowTaskDrop(event, column.key)}
+                onDrop={(event) => void dropTask(event, column.key)}
+              >
+                <div className="column-header"><span className={`column-dot ${column.tone}`} /><h3>{column.label}</h3><span className="column-count">{tasks.length}</span>{draggedTaskId && <span className="drop-indicator">{dropTargetStatus === column.key ? "Soltar aquí" : "Mover aquí"}</span>}</div>
                 <div className="task-list">
                   {tasks.map((task) => (
-                    <button className="task-card" key={task.id} onClick={() => setSelectedTaskId(task.id)}>
+                    <button
+                      className={`task-card ${draggedTaskId === task.id ? "dragging" : ""}`}
+                      key={task.id}
+                      draggable={!saving}
+                      onDragStart={(event) => startTaskDrag(event, task)}
+                      onDragEnd={finishTaskDrag}
+                      onClick={() => { if (!suppressTaskClick.current) setSelectedTaskId(task.id); }}
+                      title="Arrastrá para cambiar el estado o hacé clic para abrir"
+                      aria-label={`${task.title}. Estado: ${columns.find((item) => item.key === task.status)?.label}. Abrir detalle`}
+                    >
                       <div className="task-topline"><span className={`priority ${priorityLabels[task.priority].toLowerCase()}`}>{priorityLabels[task.priority]}</span><span className={`visibility-pill ${task.assigneeId ? "shared" : ""}`}>{task.assigneeId ? "Compartida" : "Privada"}</span></div>
                       <h4>{task.title}</h4><p><span aria-hidden="true">▦</span>{task.building || "Sin consorcio asociado"}</p>
                       <div className="task-footer"><span className={`due ${dueLabel(task.dueDate) === "Hoy" ? "today" : ""}`}>◷ {dueLabel(task.dueDate)}</span><span className="task-meta"><span aria-hidden="true">♧</span> {task.comments.length}</span><span className="avatar" title={task.assigneeName ?? task.creatorName}>{initials(task.assigneeName ?? task.creatorName)}</span></div>
