@@ -502,7 +502,7 @@ export default function TaskApp({ initialData }: { initialData: WorkspaceData })
           <div className="claims-view">
             <section className="email-test-banner">
               <div className="email-test-icon" aria-hidden="true">✉</div>
-              <div><span className="modal-kicker">GMAIL REAL</span><h2>{data.mailSettings?.inboxAddress ?? "Casilla configurada"}</h2><p>Se procesan los correos que comienzan con alguno de estos patrones: <strong>{data.mailSettings?.acceptedPatterns.join(", ") || "RECLAMO"}</strong>.</p><div className="gmail-test-example"><span>Asunto de ejemplo</span><code>{data.mailSettings?.acceptedPatterns[0] ?? "RECLAMO"} Ascensor detenido - urgente</code></div></div>
+              <div><span className="modal-kicker">GMAIL REAL</span><h2>{data.mailSettings?.inboxAddress ?? "Casilla configurada"}</h2><p>Se procesan los correos cuyo asunto contiene alguno de estos patrones: <strong>{data.mailSettings?.acceptedPatterns.join(", ") || "RECLAMO"}</strong>.</p><div className="gmail-test-example"><span>Asunto de ejemplo</span><code>AV. SAN JUAN · {data.mailSettings?.acceptedPatterns[0] ?? "RECLAMO"} urgente</code></div></div>
               {data.currentUser.role === "admin" && <div className="email-test-banner-actions"><button className="primary-button" onClick={() => setView("mail")}>Configurar correo</button><button className="secondary-button" onClick={() => window.location.reload()}>↻ Actualizar bandeja</button><button className="secondary-button" onClick={() => setEmailTestOpen(true)}>Prueba simulada</button></div>}
             </section>
             <div className="claims-summary">
@@ -530,7 +530,7 @@ export default function TaskApp({ initialData }: { initialData: WorkspaceData })
           <form className="mail-settings-view" onSubmit={saveMailSettings}>
             <section className="settings-card settings-card-intake">
               <div className="settings-card-heading">
-                <div><span className="settings-icon" aria-hidden="true">✉</span><div><span className="modal-kicker">RECEPCIÓN</span><h2>Casilla de reclamos</h2><p>Tasker consulta esta dirección y toma solamente los asuntos que coinciden con el prefijo.</p></div></div>
+                <div><span className="settings-icon" aria-hidden="true">✉</span><div><span className="modal-kicker">RECEPCIÓN</span><h2>Casilla de reclamos</h2><p>Tasker revisa la bandeja y toma los asuntos que contienen alguna regla aceptada.</p></div></div>
                 <label className="switch-label"><input type="checkbox" checked={mailDraft.intakeEnabled} onChange={(event) => setMailDraft({ ...mailDraft, intakeEnabled: event.target.checked })} /><span>Lectura automática</span></label>
               </div>
               <div className="settings-form-grid">
@@ -541,7 +541,7 @@ export default function TaskApp({ initialData }: { initialData: WorkspaceData })
               </div>
               <div className="mail-rules-grid">
                 <div className="mail-rule-card">
-                  <div><h3>Patrones aceptados</h3><p>El asunto debe comenzar con uno de estos textos.</p></div>
+                  <div><h3>Patrones aceptados</h3><p>El asunto puede contener estos textos en cualquier posición.</p></div>
                   <div className="rule-chips">{mailDraft.acceptedPatterns.map((pattern) => <span className="accepted" key={pattern}>{pattern}<button type="button" disabled={mailDraft.acceptedPatterns.length === 1} aria-label={`Quitar ${pattern}`} onClick={() => removeMailRule("acceptedPatterns", pattern)}>×</button></span>)}</div>
                   <div className="rule-input"><input value={newAcceptedPattern} onChange={(event) => setNewAcceptedPattern(event.target.value)} placeholder="Ej. CONSULTA" onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); addMailRule("acceptedPatterns", newAcceptedPattern, setNewAcceptedPattern); } }} /><button type="button" onClick={() => addMailRule("acceptedPatterns", newAcceptedPattern, setNewAcceptedPattern)}>Agregar</button></div>
                 </div>
@@ -556,7 +556,7 @@ export default function TaskApp({ initialData }: { initialData: WorkspaceData })
                   <div className="rule-input"><input value={newBlockedSender} onChange={(event) => setNewBlockedSender(event.target.value)} placeholder="Ej. newsletter@" onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); addMailRule("blockedSenders", newBlockedSender, setNewBlockedSender); } }} /><button type="button" onClick={() => addMailRule("blockedSenders", newBlockedSender, setNewBlockedSender)}>Agregar</button></div>
                 </div>
               </div>
-              <div className="settings-note"><span aria-hidden="true">i</span><p>También se rechazan automáticamente respuestas automáticas y correos masivos. Si cambiás de cuenta, guardá y volvé a usar <strong>Ver código Gmail</strong> desde la nueva casilla.</p></div>
+              <div className="settings-note"><span aria-hidden="true">i</span><p>Las notificaciones automáticas de portales también pueden crear reclamos. Solo se descartan respuestas de ausencia, rebotes y las reglas que configures arriba. Si cambiás de cuenta, guardá y volvé a usar <strong>Ver código Gmail</strong> desde la nueva casilla.</p></div>
             </section>
 
             <section className="settings-card">
@@ -733,7 +733,7 @@ export default function TaskApp({ initialData }: { initialData: WorkspaceData })
         <div className="modal-backdrop elevated" onMouseDown={() => setGmailScript(null)}>
           <section className="modal gmail-script-modal" role="dialog" aria-modal="true" aria-labelledby="gmail-script-title" onMouseDown={(event) => event.stopPropagation()}>
             <div className="modal-header"><div><span className="modal-kicker">CONEXIÓN CON GMAIL</span><h2 id="gmail-script-title">Código para Google Apps Script</h2></div><button className="close-button" onClick={() => setGmailScript(null)} aria-label="Cerrar">×</button></div>
-            <div className="gmail-script-steps"><span>1</span><p>Abrí <a href="https://script.new" target="_blank" rel="noreferrer">Google Apps Script</a> con la cuenta que recibirá los reclamos.</p><span>2</span><p>Borrá el código anterior y pegá este bloque completo.</p><span>3</span><p>Guardá y ejecutá la función <strong>configurarTasker</strong>.</p></div>
+            <div className="gmail-script-steps"><span>1</span><p>Abrí <a href="https://script.new" target="_blank" rel="noreferrer">Google Apps Script</a> con la cuenta que recibirá los reclamos.</p><span>2</span><p>Borrá el código anterior y pegá este bloque completo.</p><span>3</span><p>Guardá y ejecutá la función <strong>configurarTasker</strong>.</p><span>4</span><p>La primera ejecución volverá a revisar los últimos <strong>{data.mailSettings?.lookbackDays ?? 30} días</strong> y omitirá automáticamente los correos ya creados.</p></div>
             <textarea id="gmail-connection-code" className="gmail-script-code" readOnly spellCheck={false} value={gmailScript} onFocus={(event) => event.currentTarget.select()} aria-label="Código de conexión con Gmail" />
             <p className="gmail-script-help">Si el navegador no permite copiar automáticamente, hacé clic dentro del código y presioná <strong>Ctrl+A</strong> y después <strong>Ctrl+C</strong>.</p>
             <div className="modal-actions"><button type="button" className="secondary-button" onClick={() => setGmailScript(null)}>Cerrar</button><button type="button" className="primary-button" onClick={copyVisibleGmailScript}><span aria-hidden="true">⧉</span> Seleccionar y copiar</button></div>

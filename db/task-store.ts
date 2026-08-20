@@ -407,13 +407,13 @@ function normalizedText(value: string) {
   return value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLocaleLowerCase("es").replace(/[^a-z0-9]+/g, " ").trim();
 }
 
-function prefixPattern(prefix: string) {
-  return new RegExp(`^\\s*${prefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`, "i");
+function subjectPattern(value: string) {
+  return new RegExp(value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
 }
 
 export async function ingestEmailClaim(input: {
   externalId?: string; senderName?: string; senderEmail?: string; recipientEmails?: string;
-  subject?: string; body?: string; receivedAt?: number; isAutomatic?: boolean;
+  mailboxAddress?: string; subject?: string; body?: string; receivedAt?: number; isAutomatic?: boolean;
 }) {
   await ensureDatabase();
   const mailSettings = await readMailSettings();
@@ -427,9 +427,9 @@ export async function ingestEmailClaim(input: {
   const externalId = `gmail:${externalIdValue}`;
   const existingEvent = await db.prepare(`SELECT status, reason, claim_id FROM email_intake_events WHERE external_id = ?`)
     .bind(externalId).first<{ status: MailIntakeEvent["status"]; reason: string; claim_id: string | null }>();
-  if (existingEvent) return {
+  if (existingEvent?.status === "accepted") return {
     ok: true,
-    accepted: existingEvent.status === "accepted",
+    accepted: true,
     duplicate: true,
     reason: existingEvent.reason,
     claimId: existingEvent.claim_id,
@@ -438,52 +438,71 @@ export async function ingestEmailClaim(input: {
   const existing = await db.prepare("SELECT id, task_id FROM claims WHERE external_id = ?")
     .bind(externalId).first<{ id: string; task_id: string | null }>();
   if (existing) {
-    await db.prepare(`INSERT OR IGNORE INTO email_intake_events
-      (id, external_id, sender_email, recipient_emails, subject, status, reason, claim_id, created_at)
-      VALUES (?, ?, ?, ?, ?, 'accepted', 'Procesado anteriormente', ?, ?)`)
-      .bind(crypto.randomUUID(), externalId, senderEmail, input.recipientEmails?.slice(0, 1000) ?? "",
-        rawSubject, existing.id, Date.now()).run();
+    if (existingEvent) {
+      await db.prepare(`UPDATE email_intake_events SET sender_email = ?, recipient_emails = ?, subject = ?,
+        status = 'accepted', reason = 'Procesado anteriormente', claim_id = ? WHERE external_id = ?`)
+        .bind(senderEmail, input.recipientEmails?.slice(0, 1000) ?? "", rawSubject, existing.id, externalId).run();
+    } else {
+      await db.prepare(`INSERT INTO email_intake_events
+        (id, external_id, sender_email, recipient_emails, subject, status, reason, claim_id, created_at)
+        VALUES (?, ?, ?, ?, ?, 'accepted', 'Procesado anteriormente', ?, ?)`)
+        .bind(crypto.randomUUID(), externalId, senderEmail, input.recipientEmails?.slice(0, 1000) ?? "",
+          rawSubject, existing.id, Date.now()).run();
+    }
     return { ok: true, accepted: true, duplicate: true, claimId: existing.id, taskId: existing.task_id };
   }
 
   const normalizedSubject = rawSubject.toLocaleLowerCase("es");
   const matchingPattern = [...mailSettings.acceptedPatterns]
     .sort((left, right) => right.length - left.length)
-    .find((pattern) => prefixPattern(pattern).test(rawSubject));
+    .find((pattern) => normalizedSubject.includes(pattern.toLocaleLowerCase("es")));
   const ignoredPattern = mailSettings.ignoredSubjectPatterns.find((pattern) =>
     normalizedSubject.startsWith(pattern.toLocaleLowerCase("es"))
   );
   const blockedSender = mailSettings.blockedSenders.find((pattern) =>
     senderEmail.includes(pattern.toLocaleLowerCase("es"))
   );
+  const isAutomaticResponse = Boolean(input.isAutomatic) && /^(?:(?:re|rv|fwd|fw)\s*:\s*)*(?:respuesta\s+autom[aá]tica|fuera\s+de\s+la\s+oficina|automatic\s+reply|out\s+of\s+office|undeliver(?:able|ed)|delivery\s+status)/i.test(rawSubject);
   let rejectionReason = "";
   if (!mailSettings.intakeEnabled) rejectionReason = "La recepción automática está pausada";
   else if (!senderEmail || !emailPattern.test(senderEmail)) rejectionReason = "El remitente no tiene un email válido";
-  else if (input.isAutomatic) rejectionReason = "Respuesta automática o correo masivo";
+  else if (isAutomaticResponse) rejectionReason = "Respuesta automática del correo";
   else if (ignoredPattern) rejectionReason = `Asunto ignorado por la regla “${ignoredPattern}”`;
   else if (blockedSender) rejectionReason = `Remitente bloqueado por la regla “${blockedSender}”`;
-  else if (!matchingPattern) rejectionReason = "El asunto no comienza con un patrón aceptado";
-  else if (input.recipientEmails && !input.recipientEmails.toLocaleLowerCase("es").includes(mailSettings.inboxAddress.toLocaleLowerCase("es"))) {
+  else if (!matchingPattern) rejectionReason = "El asunto no contiene un patrón aceptado";
+  else if (input.mailboxAddress && input.mailboxAddress.trim().toLocaleLowerCase("es") !== mailSettings.inboxAddress.toLocaleLowerCase("es")) {
+    rejectionReason = "El script no corresponde a la casilla configurada";
+  } else if (!input.mailboxAddress && input.recipientEmails && !input.recipientEmails.toLocaleLowerCase("es").includes(mailSettings.inboxAddress.toLocaleLowerCase("es"))) {
     rejectionReason = "El correo no fue enviado a la casilla configurada";
   } else if (body.length < mailSettings.minimumBodyLength) {
     rejectionReason = `El mensaje tiene menos de ${mailSettings.minimumBodyLength} caracteres`;
   }
 
   if (rejectionReason) {
-    await db.prepare(`INSERT OR IGNORE INTO email_intake_events
-      (id, external_id, sender_email, recipient_emails, subject, status, reason, claim_id, created_at)
-      VALUES (?, ?, ?, ?, ?, 'rejected', ?, NULL, ?)`)
-      .bind(crypto.randomUUID(), externalId, senderEmail, input.recipientEmails?.slice(0, 1000) ?? "",
-        rawSubject, rejectionReason, Date.now()).run();
-    return { ok: true, accepted: false, duplicate: false, reason: rejectionReason };
+    if (existingEvent) {
+      await db.prepare(`UPDATE email_intake_events SET sender_email = ?, recipient_emails = ?, subject = ?,
+        status = 'rejected', reason = ?, claim_id = NULL WHERE external_id = ?`)
+        .bind(senderEmail, input.recipientEmails?.slice(0, 1000) ?? "", rawSubject, rejectionReason, externalId).run();
+    } else {
+      await db.prepare(`INSERT INTO email_intake_events
+        (id, external_id, sender_email, recipient_emails, subject, status, reason, claim_id, created_at)
+        VALUES (?, ?, ?, ?, ?, 'rejected', ?, NULL, ?)`)
+        .bind(crypto.randomUUID(), externalId, senderEmail, input.recipientEmails?.slice(0, 1000) ?? "",
+          rawSubject, rejectionReason, Date.now()).run();
+    }
+    return { ok: true, accepted: false, duplicate: Boolean(existingEvent), reason: rejectionReason };
   }
 
   const admin = await db.prepare(`SELECT id FROM users
     WHERE role = 'admin' AND status = 'active' ORDER BY created_at LIMIT 1`).first<{ id: string }>();
   if (!admin) throw new Error("No hay un administrador activo para asignar el reclamo");
 
-  const requiredPrefix = prefixPattern(matchingPattern!);
-  const cleanSubject = rawSubject.replace(requiredPrefix, "").replace(/^[:\-–—\s]+/, "").trim() || `${matchingPattern} recibido por correo`;
+  const acceptedSubjectPattern = subjectPattern(matchingPattern!);
+  const cleanSubject = rawSubject.replace(acceptedSubjectPattern, " ")
+    .replace(/^(?:(?:re|rv|fwd|fw)\s*:\s*)+/i, "")
+    .replace(/\s{2,}/g, " ")
+    .replace(/^[\s:\-–—]+|[\s:\-–—]+$/g, "")
+    .trim() || `${matchingPattern} recibido por correo`;
   const searchable = normalizedText(`${cleanSubject} ${body}`);
   const consortia = await db.prepare("SELECT id, name, address FROM consorcios ORDER BY length(name) DESC")
     .all<{ id: string; name: string; address: string }>();
@@ -501,6 +520,17 @@ export async function ingestEmailClaim(input: {
   const senderName = input.senderName?.trim().slice(0, 300) || "Remitente sin nombre";
   const taskDescription = `Correo recibido de ${senderName} <${senderEmail}>\n\n${body}\n\nReclamo ${claimId.slice(0, 8)} · ingresado automáticamente desde Gmail.`;
 
+  const eventStatement = existingEvent
+    ? db.prepare(`UPDATE email_intake_events SET sender_email = ?, recipient_emails = ?, subject = ?,
+        status = 'accepted', reason = ?, claim_id = ? WHERE external_id = ?`)
+      .bind(senderEmail, input.recipientEmails?.slice(0, 1000) ?? "", rawSubject,
+        `Aceptado por el patrón “${matchingPattern}”`, claimId, externalId)
+    : db.prepare(`INSERT INTO email_intake_events
+        (id, external_id, sender_email, recipient_emails, subject, status, reason, claim_id, created_at)
+        VALUES (?, ?, ?, ?, ?, 'accepted', ?, ?, ?)`)
+      .bind(crypto.randomUUID(), externalId, senderEmail, input.recipientEmails?.slice(0, 1000) ?? "",
+        rawSubject, `Aceptado por el patrón “${matchingPattern}”`, claimId, Date.now());
+
   await db.batch([
     db.prepare(`INSERT INTO tasks
       (id, title, description, building, priority, status, due_date, consortium_id, creator_id, assignee_id, created_at, updated_at)
@@ -514,11 +544,7 @@ export async function ingestEmailClaim(input: {
       .bind(claimId, externalId, senderName, senderEmail, cleanSubject, body,
         classification.category, classification.priority, consortium?.id ?? null,
         taskId, admin.id, now, now),
-    db.prepare(`INSERT INTO email_intake_events
-      (id, external_id, sender_email, recipient_emails, subject, status, reason, claim_id, created_at)
-      VALUES (?, ?, ?, ?, ?, 'accepted', ?, ?, ?)`)
-      .bind(crypto.randomUUID(), externalId, senderEmail, input.recipientEmails?.slice(0, 1000) ?? "",
-        rawSubject, `Aceptado por el patrón “${matchingPattern}”`, claimId, Date.now()),
+    eventStatement,
   ]);
 
   return { ok: true, accepted: true, duplicate: false, claimId, taskId, category: classification.category, priority: classification.priority, consortium: consortium?.name ?? null };
