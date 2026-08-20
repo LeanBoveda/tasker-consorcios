@@ -220,17 +220,22 @@ export async function loadWorkspace(identity: AuthIdentity): Promise<WorkspaceDa
   const consorciosResult = await db.prepare(`SELECT id, name, address, notes,
       created_at AS createdAt, updated_at AS updatedAt
     FROM consorcios ORDER BY name COLLATE NOCASE`).all<ConsortiumItem>();
-  const tasksResult = await db.prepare(`SELECT
+  const taskVisibilityClause = user.role === "admin"
+    ? ""
+    : "WHERE t.creator_id = ? OR t.assignee_id = ?";
+  const tasksQuery = db.prepare(`SELECT
       t.id, t.title, t.description, t.building, t.priority, t.status, t.due_date,
       t.consortium_id, t.creator_id, creator.name AS creator_name, t.assignee_id,
       assignee.name AS assignee_name, t.created_at, t.updated_at
     FROM tasks t
     JOIN users creator ON creator.id = t.creator_id
     LEFT JOIN users assignee ON assignee.id = t.assignee_id
-    WHERE t.creator_id = ? OR t.assignee_id = ?
+    ${taskVisibilityClause}
     ORDER BY CASE t.status WHEN 'pending' THEN 0 WHEN 'in_progress' THEN 1 WHEN 'review' THEN 2 ELSE 3 END,
-      CASE WHEN t.due_date IS NULL THEN 1 ELSE 0 END, t.due_date, t.updated_at DESC`)
-    .bind(user.id, user.id).all<TaskRow>();
+      CASE WHEN t.due_date IS NULL THEN 1 ELSE 0 END, t.due_date, t.updated_at DESC`);
+  const tasksResult = user.role === "admin"
+    ? await tasksQuery.all<TaskRow>()
+    : await tasksQuery.bind(user.id, user.id).all<TaskRow>();
 
   const taskRows = tasksResult.results ?? [];
   const claimsResult = user.role === "admin"
@@ -721,14 +726,16 @@ export async function updateTask(identity: AuthIdentity, taskId: string, input: 
   const db = getDatabase();
   const task = await db.prepare("SELECT creator_id, assignee_id FROM tasks WHERE id = ?")
     .bind(taskId).first<{ creator_id: string; assignee_id: string | null }>();
-  if (!task || (task.creator_id !== user.id && task.assignee_id !== user.id)) throw new Error("Tarea no encontrada");
+  if (!task || (user.role !== "admin" && task.creator_id !== user.id && task.assignee_id !== user.id)) {
+    throw new Error("Tarea no encontrada");
+  }
 
   const fields: string[] = [];
   const values: Array<string | number | null> = [];
   if (input.status && ["pending", "in_progress", "review", "done"].includes(input.status)) {
     fields.push("status = ?"); values.push(input.status);
   }
-  if (task.creator_id === user.id) {
+  if (task.creator_id === user.id || user.role === "admin") {
     if (input.title?.trim()) { fields.push("title = ?"); values.push(input.title.trim()); }
     if (typeof input.description === "string") { fields.push("description = ?"); values.push(input.description.trim()); }
     if ("consortiumId" in input) {
@@ -889,9 +896,11 @@ export async function addComment(identity: AuthIdentity, taskId: string, bodyVal
   const body = bodyValue.trim();
   if (!body) throw new Error("Escribí un comentario");
   const db = getDatabase();
-  const task = await db.prepare("SELECT id FROM tasks WHERE id = ? AND (creator_id = ? OR assignee_id = ?)")
-    .bind(taskId, user.id, user.id).first();
-  if (!task) throw new Error("Tarea no encontrada");
+  const task = await db.prepare("SELECT creator_id, assignee_id FROM tasks WHERE id = ?")
+    .bind(taskId).first<{ creator_id: string; assignee_id: string | null }>();
+  if (!task || (user.role !== "admin" && task.creator_id !== user.id && task.assignee_id !== user.id)) {
+    throw new Error("Tarea no encontrada");
+  }
   const now = Date.now();
   await db.batch([
     db.prepare("INSERT INTO comments (id, task_id, author_id, body, created_at) VALUES (?, ?, ?, ?, ?)")

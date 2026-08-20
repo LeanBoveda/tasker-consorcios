@@ -78,6 +78,7 @@ export default function TaskApp({ initialData }: { initialData: WorkspaceData })
   );
   const activeClaims = data.claims.filter((claim) => claim.status !== "resolved" && claim.status !== "closed");
   const isTaskView = view === "home" || view === "mine";
+  const isAdmin = data.currentUser.role === "admin";
   const usersWithEmail = data.users.filter((user) => /^\S+@\S+\.\S+$/.test(user.email) && !user.email.endsWith("@tasker.local"));
   const buildings = useMemo(() =>
     Array.from(new Set([...data.consorcios.map((item) => item.name), ...data.tasks.map((task) => task.building)].filter(Boolean))).sort((a, b) => a.localeCompare(b, "es")),
@@ -339,7 +340,7 @@ export default function TaskApp({ initialData }: { initialData: WorkspaceData })
         </div>
 
         <div className="board-heading">
-          <div><h2>{view === "mine" ? "Mis tareas" : "Tablero de tareas"}</h2><p>{visibleTasks.length} tareas visibles · las privadas no se comparten con el resto del equipo.</p></div>
+          <div><h2>{view === "mine" ? "Mis tareas" : "Tablero de tareas"}</h2><p>{visibleTasks.length} tareas visibles · {isAdmin ? "como administrador, podés ver todas las tareas del equipo." : "las privadas no se comparten con el resto del equipo."}</p></div>
           <div className="board-actions">
             <select className="filter-button" aria-label="Filtrar por persona" value={assigneeFilter} onChange={(event) => setAssigneeFilter(event.target.value)}><option value="all">Todas las personas</option>{data.users.map((user) => <option value={user.id} key={user.id}>{user.name}</option>)}</select>
             <select className="filter-button" aria-label="Filtrar por consorcio" value={buildingFilter} onChange={(event) => setBuildingFilter(event.target.value)}><option value="all">Todos los consorcios</option>{buildings.map((building) => <option value={building} key={building}>{building}</option>)}</select>
@@ -483,7 +484,7 @@ export default function TaskApp({ initialData }: { initialData: WorkspaceData })
                 <label>Prioridad<select name="priority" defaultValue="medium"><option value="low">Baja</option><option value="medium">Media</option><option value="high">Alta</option></select></label>
                 <label>Asignar a<select name="assigneeId" defaultValue=""><option value="">Solo para mí</option>{data.users.map((user) => <option value={user.id} key={user.id}>{user.name}</option>)}</select></label>
               </div>
-              <div className="privacy-banner"><span aria-hidden="true">●</span><p><strong>Privacidad automática</strong> Si no asignás a nadie, solo vos vas a ver esta tarea. Al asignarla, podrán verla y comentarla las dos personas.</p></div>
+              <div className="privacy-banner"><span aria-hidden="true">●</span><p><strong>Privacidad automática</strong> Si no asignás a nadie, solo vos y los administradores podrán ver esta tarea. Al asignarla, también podrá verla y comentarla la persona elegida.</p></div>
               <div className="modal-actions"><button type="button" className="secondary-button" onClick={() => setNewTaskOpen(false)}>Cancelar</button><button className="primary-button" disabled={saving}>{saving ? "Guardando…" : "Crear tarea"}</button></div>
             </form>
           </section>
@@ -497,9 +498,9 @@ export default function TaskApp({ initialData }: { initialData: WorkspaceData })
             <h2 id="task-detail-title">{selectedTask.title}</h2><p className="drawer-description">{selectedTask.description || "Sin descripción."}</p>
             <div className="detail-grid">
               <label>Estado<select value={selectedTask.status} disabled={saving} onChange={(event) => updateSelected({ status: event.target.value }, "Estado actualizado")}>{columns.map((column) => <option value={column.key} key={column.key}>{column.label}</option>)}</select></label>
-              <label>Prioridad<select value={selectedTask.priority} disabled={saving || selectedTask.creatorId !== data.currentUser.id} onChange={(event) => updateSelected({ priority: event.target.value })}><option value="low">Baja</option><option value="medium">Media</option><option value="high">Alta</option></select></label>
-              <label>Asignada a<select value={selectedTask.assigneeId ?? ""} disabled={saving || selectedTask.creatorId !== data.currentUser.id} onChange={(event) => updateSelected({ assigneeId: event.target.value || null }, "Asignación actualizada")}><option value="">Solo para mí</option>{data.users.map((user) => <option value={user.id} key={user.id}>{user.name}</option>)}</select></label>
-              <label>Consorcio<select value={selectedTask.consortiumId ?? ""} disabled={saving || selectedTask.creatorId !== data.currentUser.id} onChange={(event) => updateSelected({ consortiumId: event.target.value || null }, "Consorcio actualizado")}><option value="">Sin consorcio</option>{data.consorcios.map((item) => <option value={item.id} key={item.id}>{item.name}</option>)}</select></label>
+              <label>Prioridad<select value={selectedTask.priority} disabled={saving || (selectedTask.creatorId !== data.currentUser.id && !isAdmin)} onChange={(event) => updateSelected({ priority: event.target.value })}><option value="low">Baja</option><option value="medium">Media</option><option value="high">Alta</option></select></label>
+              <label>Asignada a<select value={selectedTask.assigneeId ?? ""} disabled={saving || (selectedTask.creatorId !== data.currentUser.id && !isAdmin)} onChange={(event) => updateSelected({ assigneeId: event.target.value || null }, "Asignación actualizada")}><option value="">Solo para mí</option>{data.users.map((user) => <option value={user.id} key={user.id}>{user.name}</option>)}</select></label>
+              <label>Consorcio<select value={selectedTask.consortiumId ?? ""} disabled={saving || (selectedTask.creatorId !== data.currentUser.id && !isAdmin)} onChange={(event) => updateSelected({ consortiumId: event.target.value || null }, "Consorcio actualizado")}><option value="">Sin consorcio</option>{data.consorcios.map((item) => <option value={item.id} key={item.id}>{item.name}</option>)}</select></label>
               <label>Vencimiento<span className="detail-value">{dueLabel(selectedTask.dueDate)}</span></label>
             </div>
             <div className="task-context"><span>▦</span><div><small>CONSORCIO</small><strong>{selectedTask.building || "Sin consorcio asociado"}</strong></div></div>
