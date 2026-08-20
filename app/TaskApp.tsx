@@ -127,6 +127,23 @@ export default function TaskApp({ initialData }: { initialData: WorkspaceData })
     }, "Correo procesado: reclamo y tarea creados");
     if (ok) { setEmailTestOpen(false); setView("claims"); }
   }
+  async function copyGmailConnection() {
+    setSaving(true);
+    try {
+      const response = await fetch("/api/claims/gmail-script", { cache: "no-store" });
+      const script = await response.text();
+      if (!response.ok) {
+        const payload = JSON.parse(script) as { error?: string };
+        throw new Error(payload.error || "No se pudo preparar la conexión");
+      }
+      await navigator.clipboard.writeText(script);
+      setNotice("Código de Gmail copiado. Pegalo en Google Apps Script.");
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "No se pudo copiar la conexión");
+    } finally {
+      setSaving(false);
+    }
+  }
   async function updateSelected(input: Record<string, unknown>, success = "Tarea actualizada") {
     if (selectedTask) await mutate(`/api/tasks/${selectedTask.id}`, "PATCH", input, success);
   }
@@ -259,7 +276,7 @@ export default function TaskApp({ initialData }: { initialData: WorkspaceData })
             <section className="email-test-banner">
               <div className="email-test-icon" aria-hidden="true">✉</div>
               <div><span className="modal-kicker">GMAIL REAL</span><h2>leandroboveda@gmail.com</h2><p>Mandate un correo a esta dirección con un asunto que empiece con <strong>[RECLAMO]</strong>. En aproximadamente un minuto se cargará aquí y también se creará la tarea.</p><div className="gmail-test-example"><span>Asunto de ejemplo</span><code>[RECLAMO] Ascensor detenido - urgente</code></div></div>
-              {data.currentUser.role === "admin" && <div className="email-test-banner-actions"><button className="primary-button" onClick={() => window.location.reload()}>↻ Actualizar bandeja</button><button className="secondary-button" onClick={() => setEmailTestOpen(true)}>Prueba simulada</button></div>}
+              {data.currentUser.role === "admin" && <div className="email-test-banner-actions"><button className="primary-button" disabled={saving} onClick={copyGmailConnection}>{saving ? "Preparando…" : "Copiar conexión Gmail"}</button><button className="secondary-button" onClick={() => window.location.reload()}>↻ Actualizar bandeja</button><button className="secondary-button" onClick={() => setEmailTestOpen(true)}>Prueba simulada</button></div>}
             </section>
             <div className="claims-summary">
               <article><strong>{data.claims.length}</strong><span>Correos procesados</span></article>
