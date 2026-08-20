@@ -411,9 +411,29 @@ function subjectPattern(value: string) {
   return new RegExp(value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
 }
 
+function latestEmailText(value: string) {
+  const normalized = value.replace(/\r\n?/g, "\n").trim();
+  const quotedMarkers = [
+    /^\s*(?:El|On)\s+.+(?:escribi[oó]|wrote):\s*$/gim,
+    /^\s*-{2,}\s*(?:Mensaje original|Original Message)\s*-{2,}\s*$/gim,
+    /^\s*De:\s*.+\n\s*(?:Enviado|Sent):\s*.+\n\s*(?:Para|To):\s*/gim,
+  ];
+  let cutAt = normalized.length;
+  for (const marker of quotedMarkers) {
+    const match = marker.exec(normalized);
+    if (match && match.index < cutAt) cutAt = match.index;
+  }
+  return normalized.slice(0, cutAt)
+    .split("\n")
+    .filter((line) => !/^\s*>/.test(line))
+    .join("\n")
+    .replace(/\n{4,}/g, "\n\n\n")
+    .trim();
+}
+
 export async function ingestEmailClaim(input: {
   externalId?: string; senderName?: string; senderEmail?: string; recipientEmails?: string;
-  mailboxAddress?: string; subject?: string; body?: string; receivedAt?: number; isAutomatic?: boolean;
+  mailboxAddress?: string; threadId?: string; subject?: string; body?: string; receivedAt?: number; isAutomatic?: boolean;
 }) {
   await ensureDatabase();
   const mailSettings = await readMailSettings();
@@ -425,31 +445,62 @@ export async function ingestEmailClaim(input: {
 
   const db = getDatabase();
   const externalId = `gmail:${externalIdValue}`;
+  const mailboxScope = (input.mailboxAddress?.trim() || mailSettings.inboxAddress).toLocaleLowerCase("es");
+  const threadIdValue = input.threadId?.trim().slice(0, 200) ?? "";
+  const gmailThreadId = threadIdValue ? `gmail-thread:${mailboxScope}:${threadIdValue}` : "";
   const existingEvent = await db.prepare(`SELECT status, reason, claim_id FROM email_intake_events WHERE external_id = ?`)
     .bind(externalId).first<{ status: MailIntakeEvent["status"]; reason: string; claim_id: string | null }>();
-  if (existingEvent?.status === "accepted") return {
-    ok: true,
-    accepted: true,
-    duplicate: true,
-    reason: existingEvent.reason,
-    claimId: existingEvent.claim_id,
-  };
+  if (existingEvent?.status === "accepted") {
+    let canonical = gmailThreadId
+      ? await db.prepare("SELECT id, task_id FROM claims WHERE gmail_thread_id = ?")
+        .bind(gmailThreadId).first<{ id: string; task_id: string | null }>()
+      : null;
+    if (!canonical && gmailThreadId && existingEvent.claim_id) {
+      await db.prepare("UPDATE claims SET gmail_thread_id = ? WHERE id = ? AND gmail_thread_id IS NULL")
+        .bind(gmailThreadId, existingEvent.claim_id).run();
+      canonical = await db.prepare("SELECT id, task_id FROM claims WHERE gmail_thread_id = ?")
+        .bind(gmailThreadId).first<{ id: string; task_id: string | null }>();
+    }
+    if (canonical && canonical.id !== existingEvent.claim_id) {
+      await db.prepare("UPDATE email_intake_events SET claim_id = ? WHERE external_id = ?")
+        .bind(canonical.id, externalId).run();
+    }
+    return {
+      ok: true,
+      accepted: true,
+      duplicate: true,
+      reason: existingEvent.reason,
+      claimId: canonical?.id ?? existingEvent.claim_id,
+      taskId: canonical?.task_id ?? null,
+    };
+  }
 
   const existing = await db.prepare("SELECT id, task_id FROM claims WHERE external_id = ?")
     .bind(externalId).first<{ id: string; task_id: string | null }>();
   if (existing) {
+    let canonical = gmailThreadId
+      ? await db.prepare("SELECT id, task_id FROM claims WHERE gmail_thread_id = ?")
+        .bind(gmailThreadId).first<{ id: string; task_id: string | null }>()
+      : null;
+    if (!canonical && gmailThreadId) {
+      await db.prepare("UPDATE claims SET gmail_thread_id = ? WHERE id = ? AND gmail_thread_id IS NULL")
+        .bind(gmailThreadId, existing.id).run();
+      canonical = await db.prepare("SELECT id, task_id FROM claims WHERE gmail_thread_id = ?")
+        .bind(gmailThreadId).first<{ id: string; task_id: string | null }>();
+    }
+    const acceptedClaim = canonical ?? existing;
     if (existingEvent) {
       await db.prepare(`UPDATE email_intake_events SET sender_email = ?, recipient_emails = ?, subject = ?,
         status = 'accepted', reason = 'Procesado anteriormente', claim_id = ? WHERE external_id = ?`)
-        .bind(senderEmail, input.recipientEmails?.slice(0, 1000) ?? "", rawSubject, existing.id, externalId).run();
+        .bind(senderEmail, input.recipientEmails?.slice(0, 1000) ?? "", rawSubject, acceptedClaim.id, externalId).run();
     } else {
       await db.prepare(`INSERT INTO email_intake_events
         (id, external_id, sender_email, recipient_emails, subject, status, reason, claim_id, created_at)
         VALUES (?, ?, ?, ?, ?, 'accepted', 'Procesado anteriormente', ?, ?)`)
         .bind(crypto.randomUUID(), externalId, senderEmail, input.recipientEmails?.slice(0, 1000) ?? "",
-          rawSubject, existing.id, Date.now()).run();
+          rawSubject, acceptedClaim.id, Date.now()).run();
     }
-    return { ok: true, accepted: true, duplicate: true, claimId: existing.id, taskId: existing.task_id };
+    return { ok: true, accepted: true, duplicate: true, claimId: acceptedClaim.id, taskId: acceptedClaim.task_id };
   }
 
   const normalizedSubject = rawSubject.toLocaleLowerCase("es");
@@ -503,7 +554,54 @@ export async function ingestEmailClaim(input: {
     .replace(/\s{2,}/g, " ")
     .replace(/^[\s:\-–—]+|[\s:\-–—]+$/g, "")
     .trim() || `${matchingPattern} recibido por correo`;
-  const searchable = normalizedText(`${cleanSubject} ${body}`);
+  const latestBody = latestEmailText(body);
+  const messageBody = latestBody || "Respuesta recibida sin texto nuevo; Gmail solo incluyó contenido citado.";
+  const senderName = input.senderName?.trim().slice(0, 300) || "Remitente sin nombre";
+  const now = Number.isFinite(input.receivedAt) && Number(input.receivedAt) > 0
+    ? Math.min(Number(input.receivedAt), Date.now()) : Date.now();
+
+  const threadClaim = gmailThreadId
+    ? await db.prepare("SELECT id, task_id FROM claims WHERE gmail_thread_id = ?")
+      .bind(gmailThreadId).first<{ id: string; task_id: string | null }>()
+    : null;
+  if (threadClaim) {
+    const reason = threadClaim.task_id
+      ? "Respuesta agregada como comentario en la conversación existente"
+      : "Conversación ya registrada; su tarea fue eliminada";
+    const eventStatement = existingEvent
+      ? db.prepare(`UPDATE email_intake_events SET sender_email = ?, recipient_emails = ?, subject = ?,
+          status = 'accepted', reason = ?, claim_id = ? WHERE external_id = ?`)
+        .bind(senderEmail, input.recipientEmails?.slice(0, 1000) ?? "", rawSubject, reason, threadClaim.id, externalId)
+      : db.prepare(`INSERT INTO email_intake_events
+          (id, external_id, sender_email, recipient_emails, subject, status, reason, claim_id, created_at)
+          VALUES (?, ?, ?, ?, ?, 'accepted', ?, ?, ?)`)
+        .bind(crypto.randomUUID(), externalId, senderEmail, input.recipientEmails?.slice(0, 1000) ?? "",
+          rawSubject, reason, threadClaim.id, Date.now());
+    const statements = [
+      eventStatement,
+      db.prepare("UPDATE claims SET updated_at = ? WHERE id = ?").bind(now, threadClaim.id),
+    ];
+    if (threadClaim.task_id) {
+      statements.push(
+        db.prepare("INSERT INTO comments (id, task_id, author_id, body, created_at) VALUES (?, ?, ?, ?, ?)")
+          .bind(crypto.randomUUID(), threadClaim.task_id, admin.id,
+            `Respuesta por correo de ${senderName} <${senderEmail}>\n\n${messageBody}`, now),
+        db.prepare("UPDATE tasks SET updated_at = ? WHERE id = ?").bind(now, threadClaim.task_id),
+      );
+    }
+    await db.batch(statements);
+    return {
+      ok: true,
+      accepted: true,
+      duplicate: false,
+      chained: true,
+      commentAdded: Boolean(threadClaim.task_id),
+      claimId: threadClaim.id,
+      taskId: threadClaim.task_id,
+    };
+  }
+
+  const searchable = normalizedText(`${cleanSubject} ${messageBody}`);
   const consortia = await db.prepare("SELECT id, name, address FROM consorcios ORDER BY length(name) DESC")
     .all<{ id: string; name: string; address: string }>();
   const consortium = (consortia.results ?? []).find((item) => {
@@ -512,13 +610,10 @@ export async function ingestEmailClaim(input: {
     return (name.length >= 4 && searchable.includes(name)) || (address.length >= 5 && searchable.includes(address));
   }) ?? null;
 
-  const classification = classifyEmail(cleanSubject, body);
+  const classification = classifyEmail(cleanSubject, messageBody);
   const claimId = crypto.randomUUID();
   const taskId = crypto.randomUUID();
-  const now = Number.isFinite(input.receivedAt) && Number(input.receivedAt) > 0
-    ? Math.min(Number(input.receivedAt), Date.now()) : Date.now();
-  const senderName = input.senderName?.trim().slice(0, 300) || "Remitente sin nombre";
-  const taskDescription = `Correo recibido de ${senderName} <${senderEmail}>\n\n${body}\n\nReclamo ${claimId.slice(0, 8)} · ingresado automáticamente desde Gmail.`;
+  const taskDescription = `Correo recibido de ${senderName} <${senderEmail}>\n\n${messageBody}\n\nReclamo ${claimId.slice(0, 8)} · ingresado automáticamente desde Gmail.`;
 
   const eventStatement = existingEvent
     ? db.prepare(`UPDATE email_intake_events SET sender_email = ?, recipient_emails = ?, subject = ?,
@@ -538,10 +633,10 @@ export async function ingestEmailClaim(input: {
       .bind(taskId, cleanSubject, taskDescription, consortium?.name ?? "", classification.priority,
         consortium?.id ?? null, admin.id, admin.id, now, now),
     db.prepare(`INSERT INTO claims
-      (id, source, is_test, external_id, sender_name, sender_email, subject, body, category, priority, status,
+      (id, source, is_test, external_id, gmail_thread_id, sender_name, sender_email, subject, body, category, priority, status,
        consortium_id, task_id, created_by_id, assigned_to_id, created_at, updated_at)
-      VALUES (?, 'email', 0, ?, ?, ?, ?, ?, ?, ?, 'assigned', ?, ?, NULL, ?, ?, ?)`)
-      .bind(claimId, externalId, senderName, senderEmail, cleanSubject, body,
+      VALUES (?, 'email', 0, ?, ?, ?, ?, ?, ?, ?, ?, 'assigned', ?, ?, NULL, ?, ?, ?)`)
+      .bind(claimId, externalId, gmailThreadId || null, senderName, senderEmail, cleanSubject, messageBody,
         classification.category, classification.priority, consortium?.id ?? null,
         taskId, admin.id, now, now),
     eventStatement,

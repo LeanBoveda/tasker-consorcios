@@ -74,6 +74,7 @@ async function initializeDatabase() {
       source TEXT NOT NULL DEFAULT 'email' CHECK (source IN ('email')),
       is_test INTEGER NOT NULL DEFAULT 1,
       external_id TEXT NOT NULL UNIQUE,
+      gmail_thread_id TEXT,
       sender_name TEXT NOT NULL DEFAULT '',
       sender_email TEXT NOT NULL,
       subject TEXT NOT NULL,
@@ -181,6 +182,12 @@ async function initializeDatabase() {
     await db.prepare("ALTER TABLE tasks ADD COLUMN consortium_id TEXT REFERENCES consorcios(id) ON DELETE SET NULL").run();
   }
 
+  const claimInfo = await db.prepare("PRAGMA table_info(claims)").all<{ name: string }>();
+  const claimColumns = new Set((claimInfo.results ?? []).map((column) => column.name));
+  if (!claimColumns.has("gmail_thread_id")) {
+    await db.prepare("ALTER TABLE claims ADD COLUMN gmail_thread_id TEXT").run();
+  }
+
   const legacyBuildings = await db.prepare(`SELECT DISTINCT building
     FROM tasks WHERE consortium_id IS NULL AND trim(building) <> ''`).all<{ building: string }>();
   for (const row of legacyBuildings.results ?? []) {
@@ -205,6 +212,7 @@ async function initializeDatabase() {
     db.prepare("CREATE INDEX IF NOT EXISTS idx_tasks_consortium_id ON tasks (consortium_id)"),
     db.prepare("CREATE INDEX IF NOT EXISTS idx_comments_task_created ON comments (task_id, created_at)"),
     db.prepare("CREATE UNIQUE INDEX IF NOT EXISTS claims_external_id_unique ON claims (external_id)"),
+    db.prepare("CREATE UNIQUE INDEX IF NOT EXISTS claims_gmail_thread_id_unique ON claims (gmail_thread_id)"),
     db.prepare("CREATE INDEX IF NOT EXISTS idx_claims_status_created ON claims (status, created_at)"),
     db.prepare("CREATE INDEX IF NOT EXISTS idx_claims_consortium_id ON claims (consortium_id)"),
     db.prepare("CREATE INDEX IF NOT EXISTS idx_claims_assigned_to_id ON claims (assigned_to_id)"),

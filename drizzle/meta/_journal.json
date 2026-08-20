@@ -50,6 +50,13 @@
       "when": 1787256750375,
       "tag": "0006_talented_junta",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "6",
+      "when": 1787267552094,
+      "tag": "0007_watery_talisman",
+      "breakpoints": true
     }
   ]
 }

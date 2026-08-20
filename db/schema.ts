@@ -64,6 +64,7 @@ export const claims = sqliteTable("claims", {
   source: text("source", { enum: ["email"] }).notNull().default("email"),
   isTest: integer("is_test", { mode: "boolean" }).notNull().default(true),
   externalId: text("external_id").notNull(),
+  gmailThreadId: text("gmail_thread_id"),
   senderName: text("sender_name").notNull().default(""),
   senderEmail: text("sender_email").notNull(),
   subject: text("subject").notNull(),
@@ -79,6 +80,7 @@ export const claims = sqliteTable("claims", {
   updatedAt: integer("updated_at").notNull(),
 }, (table) => [
   uniqueIndex("claims_external_id_unique").on(table.externalId),
+  uniqueIndex("claims_gmail_thread_id_unique").on(table.gmailThreadId),
   index("idx_claims_status_created").on(table.status, table.createdAt),
   index("idx_claims_consortium_id").on(table.consortiumId),
   index("idx_claims_assigned_to_id").on(table.assignedToId),

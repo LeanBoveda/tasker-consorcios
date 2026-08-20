@@ -92,6 +92,7 @@ function procesarReclamosTasker(config) {
     threads.forEach((thread) => {
       let completed = true;
       thread.getMessages().forEach((message) => {
+        if (!message.isInInbox()) return;
         if (message.getDate().getTime() < earliestMessageAt) return;
         const subject = message.getSubject().trim();
         const normalizedSubject = subject.toLowerCase();
@@ -103,7 +104,7 @@ function procesarReclamosTasker(config) {
         try {
           const headers = message.getRawContent().split(/\\r?\\n\\r?\\n/, 1)[0];
           const isAutomatic = /^Auto-Submitted:\\s*(?!no\\b)/im.test(headers) || /^Precedence:\\s*(bulk|junk|list)/im.test(headers);
-          const result = taskerRequest("/api/claims/email-intake", { externalId: message.getId(), senderName, senderEmail,
+          const result = taskerRequest("/api/claims/email-intake", { externalId: message.getId(), threadId: thread.getId(), senderName, senderEmail,
             mailboxAddress: config.inboxAddress, recipientEmails: message.getTo(), subject,
             body: message.getPlainBody(), isAutomatic, receivedAt: message.getDate().getTime() });
           if (result.duplicate) stats.duplicates += 1;
