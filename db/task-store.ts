@@ -411,24 +411,81 @@ function subjectPattern(value: string) {
   return new RegExp(value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
 }
 
-function latestEmailText(value: string) {
-  const normalized = value.replace(/\r\n?/g, "\n").trim();
+type CleanEmailContent = {
+  body: string;
+  senderName: string | null;
+  senderEmail: string | null;
+};
+
+function addressFromHeader(value: string) {
+  const angleAddress = value.match(/<([^<>\s]+@[^<>\s]+)>/);
+  const plainAddress = value.match(/\b[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}\b/);
+  const email = (angleAddress?.[1] ?? plainAddress?.[0] ?? "").trim().toLocaleLowerCase("es");
+  const name = value
+    .replace(/<[^<>]+>/g, "")
+    .replace(email, "")
+    .replace(/^['"]|['"]$/g, "")
+    .trim();
+  return { name: name || null, email: emailPattern.test(email) ? email : null };
+}
+
+function cleanEmailContent(value: string): CleanEmailContent {
+  const normalized = value.replace(/\r\n?/g, "\n").replace(/\u00a0/g, " ").trim();
+  let content = normalized;
+  let senderName: string | null = null;
+  let senderEmail: string | null = null;
+
+  const forwardedMarker = /-{5,}\s*(?:Forwarded message|Mensaje reenviado|Mensaje remitido)\s*-{5,}/i.exec(content);
+  if (forwardedMarker) {
+    const forwarded = content.slice(forwardedMarker.index + forwardedMarker[0].length).trim();
+    const separator = /\n\s*\n/.exec(forwarded);
+    if (separator) {
+      const headers = forwarded.slice(0, separator.index);
+      if (/^(?:De|From):/im.test(headers) && /^(?:Asunto|Subject):/im.test(headers)) {
+        const from = /^(?:De|From):\s*(.+)$/im.exec(headers);
+        if (from) {
+          const originalSender = addressFromHeader(from[1]);
+          senderName = originalSender.name;
+          senderEmail = originalSender.email;
+        }
+        content = forwarded.slice(separator.index + separator[0].length).trim();
+      }
+    }
+  }
+
   const quotedMarkers = [
     /^\s*(?:El|On)\s+.+(?:escribi[oó]|wrote):\s*$/gim,
     /^\s*-{2,}\s*(?:Mensaje original|Original Message)\s*-{2,}\s*$/gim,
     /^\s*De:\s*.+\n\s*(?:Enviado|Sent):\s*.+\n\s*(?:Para|To):\s*/gim,
   ];
-  let cutAt = normalized.length;
+  let cutAt = content.length;
   for (const marker of quotedMarkers) {
-    const match = marker.exec(normalized);
+    const match = marker.exec(content);
     if (match && match.index < cutAt) cutAt = match.index;
   }
-  return normalized.slice(0, cutAt)
+  content = content.slice(0, cutAt)
     .split("\n")
     .filter((line) => !/^\s*>/.test(line))
     .join("\n")
-    .replace(/\n{4,}/g, "\n\n\n")
     .trim();
+
+  const footerMarkers = [
+    /^\s*--\s*$/gm,
+    /^\s*_{5,}\s*$/gm,
+    /^\s*(?:Este (?:mensaje|correo(?: electrónico)?) es confidencial|This (?:message|e-?mail) is confidential|Aviso de confidencialidad|Confidentiality notice)\b/gim,
+    /^\s*Enviado desde (?:mi|Mail para)\b/gim,
+  ];
+  let footerAt = content.length;
+  for (const marker of footerMarkers) {
+    const match = marker.exec(content);
+    if (match && match.index < footerAt) footerAt = match.index;
+  }
+  content = content.slice(0, footerAt)
+    .replace(/\[image:[^\]]+\]/gi, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+
+  return { body: content, senderName, senderEmail };
 }
 
 export async function ingestEmailClaim(input: {
@@ -554,9 +611,12 @@ export async function ingestEmailClaim(input: {
     .replace(/\s{2,}/g, " ")
     .replace(/^[\s:\-–—]+|[\s:\-–—]+$/g, "")
     .trim() || `${matchingPattern} recibido por correo`;
-  const latestBody = latestEmailText(body);
-  const messageBody = latestBody || "Respuesta recibida sin texto nuevo; Gmail solo incluyó contenido citado.";
-  const senderName = input.senderName?.trim().slice(0, 300) || "Remitente sin nombre";
+  const cleanedEmail = cleanEmailContent(body);
+  const messageBody = cleanedEmail.body || "Respuesta recibida sin texto nuevo; Gmail solo incluyó contenido citado.";
+  const senderName = cleanedEmail.senderName?.slice(0, 300)
+    || input.senderName?.trim().slice(0, 300)
+    || "Remitente sin nombre";
+  const claimSenderEmail = cleanedEmail.senderEmail || senderEmail;
   const now = Number.isFinite(input.receivedAt) && Number(input.receivedAt) > 0
     ? Math.min(Number(input.receivedAt), Date.now()) : Date.now();
 
@@ -585,7 +645,7 @@ export async function ingestEmailClaim(input: {
       statements.push(
         db.prepare("INSERT INTO comments (id, task_id, author_id, body, created_at) VALUES (?, ?, ?, ?, ?)")
           .bind(crypto.randomUUID(), threadClaim.task_id, admin.id,
-            `Respuesta por correo de ${senderName} <${senderEmail}>\n\n${messageBody}`, now),
+            `Respuesta por correo de ${senderName} <${claimSenderEmail}>\n\n${messageBody}`, now),
         db.prepare("UPDATE tasks SET updated_at = ? WHERE id = ?").bind(now, threadClaim.task_id),
       );
     }
@@ -613,7 +673,7 @@ export async function ingestEmailClaim(input: {
   const classification = classifyEmail(cleanSubject, messageBody);
   const claimId = crypto.randomUUID();
   const taskId = crypto.randomUUID();
-  const taskDescription = `Correo recibido de ${senderName} <${senderEmail}>\n\n${messageBody}\n\nReclamo ${claimId.slice(0, 8)} · ingresado automáticamente desde Gmail.`;
+  const taskDescription = `Correo recibido de ${senderName} <${claimSenderEmail}>\n\n${messageBody}\n\nReclamo ${claimId.slice(0, 8)} · ingresado automáticamente desde Gmail.`;
 
   const eventStatement = existingEvent
     ? db.prepare(`UPDATE email_intake_events SET sender_email = ?, recipient_emails = ?, subject = ?,
@@ -636,7 +696,7 @@ export async function ingestEmailClaim(input: {
       (id, source, is_test, external_id, gmail_thread_id, sender_name, sender_email, subject, body, category, priority, status,
        consortium_id, task_id, created_by_id, assigned_to_id, created_at, updated_at)
       VALUES (?, 'email', 0, ?, ?, ?, ?, ?, ?, ?, ?, 'assigned', ?, ?, NULL, ?, ?, ?)`)
-      .bind(claimId, externalId, gmailThreadId || null, senderName, senderEmail, cleanSubject, messageBody,
+      .bind(claimId, externalId, gmailThreadId || null, senderName, claimSenderEmail, cleanSubject, messageBody,
         classification.category, classification.priority, consortium?.id ?? null,
         taskId, admin.id, now, now),
     eventStatement,
@@ -890,6 +950,62 @@ async function requireAdmin(identity: AuthIdentity) {
   const user = await currentUser(identity);
   if (user.role !== "admin") throw new Error("Solo el administrador puede realizar este cambio");
   return user;
+}
+
+export async function sanitizeImportedEmails(identity: AuthIdentity) {
+  await requireAdmin(identity);
+  const db = getDatabase();
+  const claimsResult = await db.prepare(`SELECT id, task_id, sender_name, sender_email, body
+    FROM claims WHERE source = 'email' AND is_test = 0`).all<{
+      id: string;
+      task_id: string | null;
+      sender_name: string;
+      sender_email: string;
+      body: string;
+    }>();
+  const commentsResult = await db.prepare(`SELECT id, body FROM comments
+    WHERE body LIKE 'Respuesta por correo de %'`).all<{ id: string; body: string }>();
+  const statements: D1PreparedStatement[] = [];
+  let updatedClaims = 0;
+  let updatedComments = 0;
+
+  for (const claim of claimsResult.results ?? []) {
+    const cleaned = cleanEmailContent(claim.body);
+    const cleanBody = cleaned.body || claim.body.trim();
+    const senderName = cleaned.senderName || claim.sender_name;
+    const senderEmail = cleaned.senderEmail || claim.sender_email;
+    if (cleanBody === claim.body && senderName === claim.sender_name && senderEmail === claim.sender_email) continue;
+    statements.push(db.prepare(`UPDATE claims SET sender_name = ?, sender_email = ?, body = ? WHERE id = ?`)
+      .bind(senderName, senderEmail, cleanBody, claim.id));
+    if (claim.task_id) {
+      statements.push(db.prepare("UPDATE tasks SET description = ? WHERE id = ?")
+        .bind(`Correo recibido de ${senderName} <${senderEmail}>\n\n${cleanBody}\n\nReclamo ${claim.id.slice(0, 8)} · ingresado automáticamente desde Gmail.`, claim.task_id));
+    }
+    updatedClaims += 1;
+  }
+
+  for (const comment of commentsResult.results ?? []) {
+    const parts = /^Respuesta por correo de ([^\n]+)\n\n([\s\S]*)$/.exec(comment.body);
+    if (!parts) continue;
+    const cleaned = cleanEmailContent(parts[2]);
+    if (!cleaned.body || cleaned.body === parts[2]) continue;
+    const sender = cleaned.senderEmail
+      ? `${cleaned.senderName || cleaned.senderEmail} <${cleaned.senderEmail}>`
+      : parts[1];
+    statements.push(db.prepare("UPDATE comments SET body = ? WHERE id = ?")
+      .bind(`Respuesta por correo de ${sender}\n\n${cleaned.body}`, comment.id));
+    updatedComments += 1;
+  }
+
+  for (let index = 0; index < statements.length; index += 50) {
+    await db.batch(statements.slice(index, index + 50));
+  }
+  return {
+    ok: true,
+    reviewedClaims: claimsResult.results?.length ?? 0,
+    updatedClaims,
+    updatedComments,
+  };
 }
 
 export async function resetOperationalData(identity: AuthIdentity) {
