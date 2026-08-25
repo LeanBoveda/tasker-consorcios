@@ -257,138 +257,23 @@ button { font: inherit; }
 .intake-test-modal { width: min(700px,100%); }
 .intake-test-note { color: #365f4e; background: #eef7f2; border-color: #d1e8dd; }
 .intake-test-note > span { color: var(--green); }
-.claims-view { display: grid; gap: 20px; }
-.email-test-banner { display: grid; grid-template-columns: auto minmax(0,1fr) auto; align-items: center; gap: 18px; padding: 21px; color: #183d2f; background: linear-gradient(135deg,#e7f5ed,#f7fbf9); border: 1px solid #cfe8dc; border-radius: 14px; }
-.email-test-banner h2 { margin: 0 0 6px; font-size: 19px; }
-.email-test-banner p { max-width: 760px; margin: 0; color: #577065; font-size: 13px; line-height: 1.55; }
-.email-test-banner-actions { display: grid; gap: 8px; min-width: 160px; }
-.gmail-test-example { display: flex; align-items: center; gap: 9px; margin-top: 12px; }
-.gmail-test-example span { color: #6e7b75; font-size: 11px; font-weight: 700; }
-.gmail-test-example code { padding: 6px 9px; color: #214d3c; background: rgba(255,255,255,.72); border: 1px solid #cfe1d8; border-radius: 7px; font-family: inherit; font-size: 12px; font-weight: 700; }
-.email-test-icon { display: grid; width: 48px; height: 48px; place-items: center; color: #fff; background: var(--green); border-radius: 12px; font-size: 23px; box-shadow: 0 7px 18px rgba(20,108,76,.2); }
-.claims-summary { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 12px; }
-.claims-summary article { display: flex; align-items: baseline; gap: 10px; padding: 16px 18px; background: #fff; border: 1px solid var(--border); border-radius: 11px; }
-.claims-summary strong { color: var(--green-dark); font-size: 23px; }
-.claims-summary span { color: var(--muted); font-size: 13px; }
-.claims-heading h2 { margin: 0; font-size: 18px; }
-.claims-heading p { margin: 5px 0 0; color: var(--muted); font-size: 13px; }
-.claims-list { display: grid; gap: 10px; }
-.claim-card { display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 18px; padding: 18px; background: #fff; border: 1px solid var(--border); border-radius: 12px; box-shadow: 0 2px 7px rgba(21,41,33,.035); }
-.claim-card h3 { margin: 10px 0 7px; font-size: 16px; }
-.claim-preview { display: -webkit-box; max-width: 820px; overflow: hidden; margin: 0 0 13px; color: #5d6964; font-size: 13px; line-height: 1.5; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
-.claim-badges, .claim-meta, .claim-card-side { display: flex; align-items: center; gap: 7px; }
-.claim-channel, .claim-test, .claim-live, .claim-category, .claim-status { padding: 5px 8px; border-radius: 999px; font-size: 11px; font-weight: 700; }
-.claim-channel { color: #32618b; background: #eaf3fb; }
-.claim-test { color: #765d18; background: #fff5d8; }
-.claim-live { color: #17643f; background: #e3f7eb; }
-.claim-category { color: var(--green-dark); background: var(--green-pale); }
-.claim-status { color: #3e6657; background: #edf5f1; }
-.claim-status.resolved, .claim-status.closed { color: #68716d; background: #eff1f0; }
-.claim-meta { flex-wrap: wrap; color: #7a8580; font-size: 11px; }
-.claim-meta span:not(:last-child)::after { margin-left: 7px; color: #c4cbc7; content: "·"; }
-.claim-card-side { min-width: 130px; flex-direction: column; align-items: flex-end; justify-content: flex-start; }
-.claims-empty { display: grid; justify-items: center; padding: 45px 20px; text-align: center; background: #fff; border: 1px dashed #cfd9d4; border-radius: 13px; }
-.claims-empty > span { display: grid; width: 48px; height: 48px; place-items: center; color: var(--green); background: var(--green-pale); border-radius: 50%; font-size: 22px; }
-.claims-empty h3 { margin: 14px 0 5px; font-size: 16px; }
-.claims-empty p { margin: 0 0 16px; color: var(--muted); font-size: 13px; }
-.email-test-modal { width: min(680px,100%); }
+.intake-summary { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 12px; }
+.intake-summary article { display: flex; align-items: baseline; gap: 10px; padding: 16px 18px; background: #fff; border: 1px solid var(--border); border-radius: 11px; }
+.intake-summary strong { color: var(--green-dark); font-size: 23px; }
+.intake-summary span { color: var(--muted); font-size: 13px; }
+.intake-heading h2 { margin: 0; font-size: 18px; }
+.intake-heading p { margin: 5px 0 0; color: var(--muted); font-size: 13px; }
+.intake-kind, .intake-test-badge { padding: 5px 8px; border-radius: 999px; font-size: 11px; font-weight: 700; }
+.intake-kind { color: var(--green-dark); background: var(--green-pale); }
+.intake-test-badge { color: #765d18; background: #fff5d8; }
+.intake-empty { display: grid; justify-items: center; padding: 45px 20px; text-align: center; background: #fff; border: 1px dashed #cfd9d4; border-radius: 13px; }
+.intake-empty > span { display: grid; width: 48px; height: 48px; place-items: center; color: var(--green); background: var(--green-pale); border-radius: 50%; font-size: 22px; }
+.intake-empty h3 { margin: 14px 0 5px; font-size: 16px; }
+.intake-empty p { margin: 0 0 16px; color: var(--muted); font-size: 13px; }
 .test-mode-note { display: flex; gap: 10px; margin-bottom: 16px; padding: 12px; color: #6a5b2d; background: #fff8e6; border: 1px solid #f0e0ae; border-radius: 9px; }
 .test-mode-note > span { color: #d69e2e; }
-.test-mode-note p, .classification-help { margin: 0; font-size: 12px; line-height: 1.5; }
-.classification-help { color: #718078; }
-.gmail-script-modal { width: min(780px,100%); }
-.gmail-script-steps { display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 8px 10px; margin-bottom: 14px; padding: 13px; color: #52635c; background: #f3f8f5; border: 1px solid #dceae3; border-radius: 10px; }
-.gmail-script-steps > span { display: grid; width: 23px; height: 23px; place-items: center; color: #fff; background: var(--green); border-radius: 50%; font-size: 11px; font-weight: 800; }
-.gmail-script-steps p { margin: 0; font-size: 13px; line-height: 1.45; }
-.gmail-script-steps a { color: var(--green-dark); font-weight: 750; }
-.gmail-script-code { width: 100%; height: min(390px,42vh); padding: 14px; color: #dcefe6; background: #173329; border: 1px solid #284b3e; border-radius: 10px; outline: none; font-family: Consolas, "Courier New", monospace; font-size: 12px; line-height: 1.5; resize: vertical; tab-size: 2; }
-.gmail-script-code:focus { border-color: #64a88b; box-shadow: 0 0 0 3px rgba(20,108,76,.12); }
-.gmail-script-help { margin: 9px 0 0; color: var(--muted); font-size: 12px; line-height: 1.45; }
-.mail-settings-view { display: grid; gap: 17px; }
-.settings-card { padding: 22px; background: #fff; border: 1px solid var(--line); border-radius: 14px; box-shadow: 0 3px 12px rgba(21,41,33,.035); }
-.settings-card-intake { border-color: #cee4da; }
-.settings-card-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; margin-bottom: 20px; }
-.settings-card-heading > div { display: flex; align-items: flex-start; gap: 13px; }
-.settings-card-heading h2 { margin: 0 0 5px; font-size: 19px; }
-.settings-card-heading p { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.45; }
-.settings-icon { display: grid; flex: 0 0 auto; width: 42px; height: 42px; place-items: center; color: #fff; background: var(--green); border-radius: 11px; font-size: 19px; }
-.settings-icon.reminder { color: #4669a8; background: #e9effa; }
-.switch-label { display: flex; flex: 0 0 auto; align-items: center; gap: 8px; padding: 8px 11px; color: #43554e; background: #f7faf8; border: 1px solid #e1e9e5; border-radius: 999px; cursor: pointer; font-size: 13px; font-weight: 700; }
-.switch-label input, .check-card input { width: 17px; height: 17px; accent-color: var(--green); }
-.settings-form-grid { display: grid; grid-template-columns: 1.3fr 1fr .72fr 1fr; align-items: end; gap: 13px; }
-.settings-form-grid label, .reminder-time-row label { display: grid; gap: 7px; color: #52615b; font-size: 13px; font-weight: 700; }
-.settings-form-grid input, .settings-form-grid select, .reminder-time-row select, .add-recipient input { width: 100%; height: 42px; padding: 0 11px; color: var(--ink); background: #fff; border: 1px solid #dfe4e1; border-radius: 8px; outline: none; font: inherit; font-size: 14px; }
-.settings-form-grid input:focus, .settings-form-grid select:focus, .reminder-time-row select:focus, .add-recipient input:focus { border-color: #77a891; box-shadow: 0 0 0 3px rgba(20,108,76,.07); }
-.connection-status { display: flex; min-height: 42px; align-items: center; gap: 10px; padding: 8px 11px; background: #f7faf8; border: 1px solid #e6ece9; border-radius: 8px; }
-.connection-status .status-dot { margin: 0; }
-.status-dot.paused { background: #a0a9a5; border-color: #eaedeb; }
-.status-dot.error { background: #c85643; border-color: #f7d9d2; }
-.connection-status.error { color: #773f35; background: #fff5f2; border-color: #f0d5cf; }
-.connection-status strong, .connection-status small { display: block; }
-.connection-status strong { margin-bottom: 2px; font-size: 12px; }
-.connection-status small { color: var(--muted); font-size: 10px; line-height: 1.3; }
-.settings-note { display: flex; gap: 9px; margin-top: 15px; padding: 11px 12px; color: #536a60; background: #f1f7f4; border-radius: 9px; }
-.settings-note > span { display: grid; flex: 0 0 auto; width: 20px; height: 20px; place-items: center; color: #fff; background: var(--green); border-radius: 50%; font-size: 11px; font-weight: 800; }
-.settings-note p { margin: 0; font-size: 12px; line-height: 1.5; }
-.mail-rules-grid { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 10px; margin-top: 18px; }
-.mail-rule-card { display: flex; min-width: 0; min-height: 205px; flex-direction: column; padding: 14px; background: #fafbfa; border: 1px solid #e3e9e6; border-radius: 11px; }
-.mail-rule-card h3 { margin: 0 0 4px; font-size: 14px; }
-.mail-rule-card p { margin: 0; color: var(--muted); font-size: 11px; line-height: 1.4; }
-.rule-chips { display: flex; flex-wrap: wrap; align-content: flex-start; gap: 6px; margin: 12px 0; }
-.rule-chips > span { display: inline-flex; max-width: 100%; align-items: center; gap: 6px; padding: 5px 7px 5px 9px; overflow: hidden; border-radius: 999px; font-size: 10px; font-weight: 750; text-overflow: ellipsis; white-space: nowrap; }
-.rule-chips > span.accepted { color: #256044; background: #e4f4eb; }
-.rule-chips > span.ignored { color: #786020; background: #fff3d2; }
-.rule-chips > span.blocked { color: #8a483b; background: #fbeae6; }
-.rule-chips button { display: grid; flex: 0 0 auto; width: 17px; height: 17px; place-items: center; padding: 0; color: inherit; background: rgba(255,255,255,.65); border: 0; border-radius: 50%; cursor: pointer; }
-.rule-chips button:disabled { cursor: not-allowed; opacity: .35; }
-.rule-input { display: flex; gap: 6px; margin-top: auto; }
-.rule-input input { min-width: 0; width: 100%; height: 35px; padding: 0 9px; color: var(--ink); background: #fff; border: 1px solid #dfe4e1; border-radius: 7px; outline: none; font-size: 12px; }
-.rule-input input:focus { border-color: #77a891; box-shadow: 0 0 0 3px rgba(20,108,76,.07); }
-.rule-input button { height: 35px; padding: 0 10px; color: var(--green-dark); background: var(--green-pale); border: 1px solid #cde1d7; border-radius: 7px; cursor: pointer; font-size: 11px; font-weight: 750; }
-.reminder-options { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 10px; }
-.check-card { display: flex; min-height: 78px; align-items: flex-start; gap: 10px; padding: 13px; background: #fafbfa; border: 1px solid #e5eae7; border-radius: 10px; cursor: pointer; }
-.check-card:has(input:checked) { background: #eef7f2; border-color: #cce1d6; }
-.check-card input { flex: 0 0 auto; margin-top: 2px; }
-.check-card strong, .check-card small { display: block; }
-.check-card strong { margin-bottom: 5px; font-size: 13px; }
-.check-card small { color: var(--muted); font-size: 11px; line-height: 1.35; }
-.reminder-time-row { display: flex; align-items: flex-end; gap: 13px; margin: 16px 0 20px; }
-.reminder-time-row label { width: 230px; }
-.reminder-time-row > span { padding-bottom: 11px; color: var(--muted); font-size: 12px; }
-.recipient-section { padding-top: 19px; border-top: 1px solid var(--line); }
-.recipient-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 12px; }
-.recipient-heading h3 { margin: 0 0 4px; font-size: 15px; }
-.recipient-heading p { margin: 0; color: var(--muted); font-size: 12px; }
-.recipient-heading > span { padding: 5px 9px; color: var(--green-dark); background: var(--green-pale); border-radius: 999px; font-size: 11px; font-weight: 700; }
-.team-recipient-grid { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 8px; }
-.recipient-person { display: grid; grid-template-columns: auto minmax(0,1fr) auto; align-items: center; gap: 9px; padding: 10px; color: inherit; background: #fff; border: 1px solid #e4e9e6; border-radius: 9px; cursor: pointer; text-align: left; }
-.recipient-person:hover, .recipient-person.selected { border-color: #b9d6c8; }
-.recipient-person.selected { background: #f0f8f4; }
-.recipient-person strong, .recipient-person small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.recipient-person strong { margin-bottom: 3px; font-size: 12px; }
-.recipient-person small { color: var(--muted); font-size: 10px; }
-.recipient-check { display: grid; width: 22px; height: 22px; place-items: center; color: var(--green); background: var(--green-pale); border-radius: 50%; font-size: 12px; font-weight: 800; }
-.no-team-emails { grid-column: 1 / -1; margin: 0; padding: 13px; color: var(--muted); background: #fafbfa; border: 1px dashed #d8dfdb; border-radius: 9px; font-size: 12px; }
-.recipient-chips { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 12px; }
-.recipient-chips > span { display: inline-flex; align-items: center; gap: 7px; padding: 6px 8px 6px 10px; color: #385b4e; background: #edf6f1; border-radius: 999px; font-size: 11px; font-weight: 700; }
-.recipient-chips button { display: grid; width: 18px; height: 18px; place-items: center; padding: 0; color: #668177; background: #dcebe4; border: 0; border-radius: 50%; cursor: pointer; }
-.add-recipient { display: flex; max-width: 520px; gap: 8px; margin-top: 12px; }
-.settings-actions { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 16px 18px; background: #f0f4f2; border: 1px solid #dfe7e3; border-radius: 12px; }
-.settings-actions p { margin: 0; color: #63716b; font-size: 12px; }
-.settings-actions > div { display: flex; flex: 0 0 auto; gap: 8px; }
-.settings-card-heading.compact { align-items: center; margin-bottom: 14px; }
-.settings-icon.log { color: #516a60; background: #edf2ef; }
-.mail-event-list { display: grid; gap: 7px; }
-.mail-event-row { display: grid; grid-template-columns: auto minmax(180px,1.1fr) minmax(220px,1.4fr) auto; align-items: center; gap: 12px; padding: 11px 12px; background: #fafbfa; border: 1px solid #e7ebe9; border-radius: 9px; }
-.mail-event-status { padding: 5px 8px; border-radius: 999px; font-size: 10px; font-weight: 800; }
-.mail-event-status.accepted { color: #256044; background: #e4f4eb; }
-.mail-event-status.rejected { color: #8a483b; background: #fbeae6; }
-.mail-event-row strong, .mail-event-row div > span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.mail-event-row strong { margin-bottom: 3px; font-size: 12px; }
-.mail-event-row div > span, .mail-event-row p, .mail-event-row time { color: var(--muted); font-size: 10px; }
-.mail-event-row p { margin: 0; line-height: 1.4; }
-.mail-event-row time { white-space: nowrap; }
-.empty-mail-events { margin: 0; padding: 22px; color: var(--muted); background: #fafbfa; border: 1px dashed #d9e0dc; border-radius: 9px; font-size: 12px; text-align: center; }
+.test-mode-note p { margin: 0; font-size: 12px; line-height: 1.5; }
+ .row-button { height: 32px; padding: 0 10px; color: #52605a; background: #fff; border: 1px solid #dfe4e1; border-radius: 7px; cursor: pointer; font-size: 9px; font-weight: 700; }
 .row-button { height: 32px; padding: 0 10px; color: #52605a; background: #fff; border: 1px solid #dfe4e1; border-radius: 7px; cursor: pointer; font-size: 9px; font-weight: 700; }
 .row-button:hover { color: var(--green); border-color: #b9cec4; }
 .row-button.danger { color: #a24334; border-color: #edd0ca; }
@@ -540,31 +425,16 @@ button { font: inherit; }
   .modal .primary-button { font-size: 13px; }
   .consortium-row { grid-template-columns: auto minmax(0,1fr); }
   .consortium-actions { grid-column: 1 / -1; justify-content: flex-end; }
-  .email-test-banner { grid-template-columns: auto minmax(0,1fr); }
-  .email-test-banner-actions { grid-column: 1 / -1; grid-template-columns: 1fr 1fr; }
-  .email-test-banner .primary-button { justify-self: stretch; font-size: 13px; }
-  .gmail-test-example { align-items: flex-start; flex-direction: column; }
-  .claims-summary { grid-template-columns: 1fr; }
+  .intake-summary { grid-template-columns: 1fr; }
   .intake-ready-banner { grid-template-columns: auto minmax(0,1fr); }
   .intake-ready-steps { grid-column: 1 / -1; flex-wrap: wrap; }
   .intake-heading { align-items: stretch; flex-direction: column; }
   .intake-card { grid-template-columns: 1fr; }
   .intake-card-source { padding-right: 0; padding-bottom: 11px; border-right: 0; border-bottom: 1px solid #edf0ee; }
   .intake-card-actions { min-width: 0; flex-direction: row; flex-wrap: wrap; }
-  .claim-card { grid-template-columns: 1fr; }
-  .claim-card-side { min-width: 0; flex-direction: row; align-items: center; justify-content: flex-start; flex-wrap: wrap; }
   .team-row { grid-template-columns: auto minmax(0,1fr); }
   .team-row-actions { grid-column: 1 / -1; justify-content: flex-end; }
   .import-actions { align-items: stretch; flex-direction: column; }
   .import-row { grid-template-columns: 1fr 1.2fr 1fr; }
   .import-row span:last-child { display: none; }
-  .settings-card-heading, .settings-actions { align-items: stretch; flex-direction: column; }
-  .settings-form-grid, .reminder-options, .team-recipient-grid, .mail-rules-grid { grid-template-columns: 1fr; }
-  .reminder-time-row { align-items: stretch; flex-direction: column; }
-  .reminder-time-row label { width: 100%; }
-  .reminder-time-row > span { padding-bottom: 0; }
-  .add-recipient, .settings-actions > div { flex-direction: column; max-width: none; }
-  .settings-actions .primary-button { justify-content: center; font-size: 13px; }
-  .mail-event-row { grid-template-columns: auto minmax(0,1fr); }
-  .mail-event-row p, .mail-event-row time { grid-column: 2; }
 }

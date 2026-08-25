@@ -59,33 +59,6 @@ export const comments = sqliteTable("comments", {
   index("idx_comments_task_created").on(table.taskId, table.createdAt),
 ]);
 
-export const claims = sqliteTable("claims", {
-  id: text("id").primaryKey(),
-  source: text("source", { enum: ["email"] }).notNull().default("email"),
-  isTest: integer("is_test", { mode: "boolean" }).notNull().default(true),
-  externalId: text("external_id").notNull(),
-  gmailThreadId: text("gmail_thread_id"),
-  senderName: text("sender_name").notNull().default(""),
-  senderEmail: text("sender_email").notNull(),
-  subject: text("subject").notNull(),
-  body: text("body").notNull(),
-  category: text("category", { enum: ["ascensor", "agua", "gas", "electricidad", "seguridad", "limpieza", "convivencia", "administracion", "mantenimiento", "otro"] }).notNull().default("otro"),
-  priority: text("priority", { enum: ["low", "medium", "high"] }).notNull().default("medium"),
-  status: text("status", { enum: ["new", "assigned", "in_progress", "waiting", "resolved", "closed"] }).notNull().default("new"),
-  consortiumId: text("consortium_id").references(() => consorcios.id, { onDelete: "set null" }),
-  taskId: text("task_id").references(() => tasks.id, { onDelete: "set null" }),
-  createdById: text("created_by_id").references(() => users.id, { onDelete: "set null" }),
-  assignedToId: text("assigned_to_id").references(() => users.id, { onDelete: "set null" }),
-  createdAt: integer("created_at").notNull(),
-  updatedAt: integer("updated_at").notNull(),
-}, (table) => [
-  uniqueIndex("claims_external_id_unique").on(table.externalId),
-  uniqueIndex("claims_gmail_thread_id_unique").on(table.gmailThreadId),
-  index("idx_claims_status_created").on(table.status, table.createdAt),
-  index("idx_claims_consortium_id").on(table.consortiumId),
-  index("idx_claims_assigned_to_id").on(table.assignedToId),
-]);
-
 export const automaticIntake = sqliteTable("automatic_intake", {
   id: text("id").primaryKey(),
   source: text("source", { enum: ["email", "whatsapp"] }).notNull(),
@@ -114,64 +87,6 @@ export const automaticIntake = sqliteTable("automatic_intake", {
   index("idx_automatic_intake_status_created").on(table.status, table.createdAt),
   index("idx_automatic_intake_source_account").on(table.source, table.sourceAccount, table.receivedAt),
   index("idx_automatic_intake_task_id").on(table.taskId),
-]);
-
-export const mailSettings = sqliteTable("mail_settings", {
-  id: text("id").primaryKey(),
-  intakeEnabled: integer("intake_enabled", { mode: "boolean" }).notNull().default(true),
-  inboxAddress: text("inbox_address").notNull().default("leandroboveda@gmail.com"),
-  subjectPrefix: text("subject_prefix").notNull().default("[RECLAMO]"),
-  acceptedPatterns: text("accepted_patterns").notNull().default('["RECLAMO","SOLICITUD","PEDIDO"]'),
-  ignoredSubjectPatterns: text("ignored_subject_patterns").notNull().default('["[TASKER]","RESPUESTA AUTOMÁTICA","FUERA DE LA OFICINA"]'),
-  blockedSenders: text("blocked_senders").notNull().default('["no-reply","noreply"]'),
-  minimumBodyLength: integer("minimum_body_length").notNull().default(5),
-  lookbackDays: integer("lookback_days").notNull().default(7),
-  remindersEnabled: integer("reminders_enabled", { mode: "boolean" }).notNull().default(false),
-  reminderRecipients: text("reminder_recipients").notNull().default("[]"),
-  notifyUrgent: integer("notify_urgent", { mode: "boolean" }).notNull().default(true),
-  notifyDueToday: integer("notify_due_today", { mode: "boolean" }).notNull().default(true),
-  notifyOverdue: integer("notify_overdue", { mode: "boolean" }).notNull().default(true),
-  dailySummary: integer("daily_summary", { mode: "boolean" }).notNull().default(false),
-  reminderHour: integer("reminder_hour").notNull().default(9),
-  timezone: text("timezone").notNull().default("America/Buenos_Aires"),
-  lastSyncAt: integer("last_sync_at"),
-  lastSyncStatus: text("last_sync_status", { enum: ["idle", "ok", "error"] }).notNull().default("idle"),
-  lastSyncDetail: text("last_sync_detail").notNull().default(""),
-  lastSyncProcessed: integer("last_sync_processed").notNull().default(0),
-  updatedById: text("updated_by_id").references(() => users.id, { onDelete: "set null" }),
-  updatedAt: integer("updated_at").notNull(),
-});
-
-export const emailIntakeEvents = sqliteTable("email_intake_events", {
-  id: text("id").primaryKey(),
-  externalId: text("external_id").notNull(),
-  senderEmail: text("sender_email").notNull().default(""),
-  recipientEmails: text("recipient_emails").notNull().default(""),
-  subject: text("subject").notNull().default(""),
-  status: text("status", { enum: ["accepted", "rejected"] }).notNull(),
-  reason: text("reason").notNull().default(""),
-  claimId: text("claim_id").references(() => claims.id, { onDelete: "set null" }),
-  createdAt: integer("created_at").notNull(),
-}, (table) => [
-  uniqueIndex("email_intake_events_external_id_unique").on(table.externalId),
-  index("idx_email_intake_events_status_created").on(table.status, table.createdAt),
-]);
-
-export const emailNotifications = sqliteTable("email_notifications", {
-  id: text("id").primaryKey(),
-  notificationKey: text("notification_key").notNull(),
-  recipientEmail: text("recipient_email").notNull(),
-  type: text("type", { enum: ["urgent", "due_today", "overdue", "daily_summary"] }).notNull(),
-  subject: text("subject").notNull(),
-  body: text("body").notNull(),
-  status: text("status", { enum: ["pending", "reserved", "sent"] }).notNull().default("pending"),
-  reservedAt: integer("reserved_at"),
-  sentAt: integer("sent_at"),
-  createdAt: integer("created_at").notNull(),
-  updatedAt: integer("updated_at").notNull(),
-}, (table) => [
-  uniqueIndex("email_notifications_key_unique").on(table.notificationKey),
-  index("idx_email_notifications_status_created").on(table.status, table.createdAt),
 ]);
 
 export const sessions = sqliteTable("sessions", {

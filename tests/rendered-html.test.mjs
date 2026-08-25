@@ -49,3 +49,21 @@ test("ships the D1 migration for the new intake records", async () => {
   assert.match(migration, /CREATE UNIQUE INDEX `automatic_intake_source_external_unique`/);
   assert.match(migration, /CREATE INDEX `idx_automatic_intake_status_created`/);
 });
+
+test("removes the legacy Gmail workflow and clears operational data", async () => {
+  const [app, store, schema, migration, envExample] = await Promise.all([
+    source("app/TaskApp.tsx"),
+    source("db/task-store.ts"),
+    source("db/schema.ts"),
+    source("drizzle/0009_tense_prowler.sql"),
+    source(".env.example"),
+  ]);
+
+  assert.doesNotMatch(app, /Configuración correo|Apps Script|gmail-script/);
+  assert.doesNotMatch(store, /mail_settings|email_intake_events|email_notifications/);
+  assert.doesNotMatch(schema, /export const (claims|mailSettings|emailIntakeEvents|emailNotifications)/);
+  assert.match(migration, /DELETE FROM `automatic_intake`/);
+  assert.match(migration, /DELETE FROM `tasks`/);
+  assert.match(migration, /DROP TABLE `mail_settings`/);
+  assert.doesNotMatch(envExample, /EMAIL_INTAKE_KEY/);
+});

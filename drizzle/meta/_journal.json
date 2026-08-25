@@ -64,6 +64,13 @@
       "when": 1787628368561,
       "tag": "0008_tearful_sprite",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "6",
+      "when": 1787630827937,
+      "tag": "0009_tense_prowler",
+      "breakpoints": true
     }
   ]
 }
