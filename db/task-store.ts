@@ -56,6 +56,37 @@ export type ClaimItem = {
   createdAt: number;
   updatedAt: number;
 };
+export type IntakeAttachment = {
+  name: string;
+  contentType: string;
+  size: number | null;
+  url: string | null;
+};
+export type AutomaticIntakeItem = {
+  id: string;
+  source: "email" | "whatsapp";
+  sourceAccount: string;
+  externalId: string;
+  conversationId: string | null;
+  senderName: string;
+  senderAddress: string;
+  title: string;
+  body: string;
+  kind: "claim" | "request" | "order" | "notice" | "other";
+  priority: "low" | "medium" | "high";
+  status: "pending" | "accepted" | "discarded" | "error";
+  consortiumId: string | null;
+  consortiumName: string | null;
+  taskId: string | null;
+  attachments: IntakeAttachment[];
+  isTest: boolean;
+  errorDetail: string;
+  receivedAt: number;
+  reviewedByName: string | null;
+  reviewedAt: number | null;
+  createdAt: number;
+  updatedAt: number;
+};
 export type MailSettings = {
   intakeEnabled: boolean;
   inboxAddress: string;
@@ -95,6 +126,7 @@ export type WorkspaceData = {
   consorcios: ConsortiumItem[];
   tasks: TaskItem[];
   claims: ClaimItem[];
+  intakeItems: AutomaticIntakeItem[];
   mailSettings: MailSettings | null;
   mailEvents: MailIntakeEvent[];
 };
@@ -117,6 +149,14 @@ type ClaimRow = {
   consortium_id: string | null; consortium_name: string | null; task_id: string | null;
   assigned_to_id: string | null; assigned_to_name: string | null;
   created_at: number; updated_at: number;
+};
+type AutomaticIntakeRow = {
+  id: string; source: AutomaticIntakeItem["source"]; source_account: string; external_id: string;
+  conversation_id: string | null; sender_name: string; sender_address: string; title: string; body: string;
+  kind: AutomaticIntakeItem["kind"]; priority: AutomaticIntakeItem["priority"]; status: AutomaticIntakeItem["status"];
+  consortium_id: string | null; consortium_name: string | null; task_id: string | null; attachments: string;
+  is_test: number; error_detail: string; received_at: number; reviewed_by_name: string | null;
+  reviewed_at: number | null; created_at: number; updated_at: number;
 };
 type MailSettingsRow = {
   intake_enabled: number;
@@ -159,6 +199,21 @@ function parseStringList(value: string): string[] {
     const parsed = JSON.parse(value);
     if (!Array.isArray(parsed)) return [];
     return Array.from(new Set(parsed.map((item) => String(item).trim()).filter(Boolean)));
+  } catch {
+    return [];
+  }
+}
+
+function parseIntakeAttachments(value: string): IntakeAttachment[] {
+  try {
+    const parsed = JSON.parse(value);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.slice(0, 20).map((item) => ({
+      name: String(item?.name ?? "Archivo").trim().slice(0, 300) || "Archivo",
+      contentType: String(item?.contentType ?? item?.type ?? "application/octet-stream").trim().slice(0, 150),
+      size: Number.isFinite(Number(item?.size)) && Number(item.size) >= 0 ? Number(item.size) : null,
+      url: typeof item?.url === "string" && /^https:\/\//i.test(item.url) ? item.url.slice(0, 2000) : null,
+    }));
   } catch {
     return [];
   }
@@ -257,6 +312,18 @@ export async function loadWorkspace(identity: AuthIdentity): Promise<WorkspaceDa
       LEFT JOIN users assignee ON assignee.id = r.assigned_to_id
       WHERE r.assigned_to_id = ?
       ORDER BY r.created_at DESC`).bind(user.id).all<ClaimRow>();
+  const intakeResult = user.role === "admin"
+    ? await db.prepare(`SELECT i.id, i.source, i.source_account, i.external_id, i.conversation_id,
+        i.sender_name, i.sender_address, i.title, i.body, i.kind, i.priority, i.status,
+        i.consortium_id, c.name AS consortium_name, i.task_id, i.attachments, i.is_test,
+        i.error_detail, i.received_at, reviewer.name AS reviewed_by_name, i.reviewed_at,
+        i.created_at, i.updated_at
+      FROM automatic_intake i
+      LEFT JOIN consorcios c ON c.id = i.consortium_id
+      LEFT JOIN users reviewer ON reviewer.id = i.reviewed_by_id
+      ORDER BY CASE i.status WHEN 'pending' THEN 0 WHEN 'error' THEN 1 WHEN 'accepted' THEN 2 ELSE 3 END,
+        i.received_at DESC LIMIT 100`).all<AutomaticIntakeRow>()
+    : { results: [] as AutomaticIntakeRow[] };
   const mailEvents = user.role === "admin"
     ? (await db.prepare(`SELECT id, sender_email, recipient_emails, subject, status, reason,
         claim_id, created_at FROM email_intake_events ORDER BY created_at DESC LIMIT 25`)
@@ -322,6 +389,31 @@ export async function loadWorkspace(identity: AuthIdentity): Promise<WorkspaceDa
       createdAt: claim.created_at,
       updatedAt: claim.updated_at,
     })),
+    intakeItems: (intakeResult.results ?? []).map((item) => ({
+      id: item.id,
+      source: item.source,
+      sourceAccount: item.source_account,
+      externalId: item.external_id,
+      conversationId: item.conversation_id,
+      senderName: item.sender_name,
+      senderAddress: item.sender_address,
+      title: item.title,
+      body: item.body,
+      kind: item.kind,
+      priority: item.priority,
+      status: item.status,
+      consortiumId: item.consortium_id,
+      consortiumName: item.consortium_name,
+      taskId: item.task_id,
+      attachments: parseIntakeAttachments(item.attachments),
+      isTest: Boolean(item.is_test),
+      errorDetail: item.error_detail,
+      receivedAt: item.received_at,
+      reviewedByName: item.reviewed_by_name,
+      reviewedAt: item.reviewed_at,
+      createdAt: item.created_at,
+      updatedAt: item.updated_at,
+    })),
     mailSettings: user.role === "admin" ? await readMailSettings() : null,
     mailEvents: mailEvents.map((event) => ({
       id: event.id,
@@ -356,6 +448,171 @@ function classifyEmail(subject: string, body: string): Pick<ClaimItem, "category
     ? "high"
     : lowWords.some((word) => text.includes(word)) ? "low" : "medium";
   return { category, priority };
+}
+
+function classifyIntakeKind(title: string, body: string): AutomaticIntakeItem["kind"] {
+  const text = normalizedText(`${title} ${body}`);
+  if (/\b(reclamo|queja|problema|falla|rotura|perdida|urgente)\b/.test(text)) return "claim";
+  if (/\b(solicitud|solicito|necesito|consulta|informacion)\b/.test(text)) return "request";
+  if (/\b(pedido|presupuesto|comprar|compra|enviar|envio)\b/.test(text)) return "order";
+  if (/\b(aviso|informa|notifica|comunica)\b/.test(text)) return "notice";
+  return "other";
+}
+
+export async function ingestAutomaticItem(input: {
+  source?: string;
+  sourceAccount?: string;
+  externalId?: string;
+  conversationId?: string | null;
+  senderName?: string;
+  senderAddress?: string;
+  title?: string;
+  body?: string;
+  kind?: string;
+  priority?: string;
+  consortiumId?: string | null;
+  attachments?: unknown;
+  receivedAt?: number;
+  isTest?: boolean;
+}) {
+  await ensureDatabase();
+  const source = input.source === "whatsapp" ? "whatsapp" : input.source === "email" ? "email" : null;
+  if (!source) throw new Error("El origen debe ser email o whatsapp");
+  const sourceAccount = String(input.sourceAccount ?? "").trim().slice(0, 200)
+    || (source === "email" ? "Correo sin identificar" : "WhatsApp sin identificar");
+  const externalId = String(input.externalId ?? "").trim().slice(0, 300);
+  if (!externalId) throw new Error("El ingreso no tiene identificador externo");
+  const body = String(input.body ?? "").replace(/\r\n?/g, "\n").trim().slice(0, 20000);
+  const suppliedTitle = String(input.title ?? "").trim().slice(0, 500);
+  if (!suppliedTitle && !body) throw new Error("El ingreso no contiene título ni mensaje");
+  const title = suppliedTitle || body.split("\n").find((line) => line.trim())?.trim().slice(0, 120) || "Ingreso automático";
+  const senderName = String(input.senderName ?? "").trim().slice(0, 300) || "Remitente sin nombre";
+  const senderAddress = String(input.senderAddress ?? "").trim().slice(0, 320);
+  const conversationId = String(input.conversationId ?? "").trim().slice(0, 300) || null;
+  const attachments = parseIntakeAttachments(JSON.stringify(input.attachments ?? []));
+  const db = getDatabase();
+
+  const existing = await db.prepare(`SELECT id, status, task_id FROM automatic_intake
+    WHERE source = ? AND source_account = ? AND external_id = ?`)
+    .bind(source, sourceAccount, externalId)
+    .first<{ id: string; status: AutomaticIntakeItem["status"]; task_id: string | null }>();
+  if (existing) {
+    return { ok: true, accepted: true, duplicate: true, intakeId: existing.id, taskId: existing.task_id, status: existing.status };
+  }
+
+  const admin = await db.prepare(`SELECT id FROM users
+    WHERE role = 'admin' AND status = 'active' ORDER BY created_at LIMIT 1`).first<{ id: string }>();
+  if (!admin) throw new Error("No hay un administrador activo para recibir el ingreso");
+
+  let consortium: { id: string; name: string } | null = null;
+  if (input.consortiumId) {
+    consortium = await db.prepare("SELECT id, name FROM consorcios WHERE id = ?")
+      .bind(String(input.consortiumId)).first<{ id: string; name: string }>();
+    if (!consortium) throw new Error("El consorcio indicado no existe");
+  } else {
+    const searchable = normalizedText(`${title} ${body}`);
+    const consortia = await db.prepare("SELECT id, name, address FROM consorcios ORDER BY length(name) DESC")
+      .all<{ id: string; name: string; address: string }>();
+    const match = (consortia.results ?? []).find((item) => {
+      const name = normalizedText(item.name);
+      const address = normalizedText(item.address);
+      return (name.length >= 4 && searchable.includes(name)) || (address.length >= 5 && searchable.includes(address));
+    });
+    if (match) consortium = { id: match.id, name: match.name };
+  }
+
+  const classification = classifyEmail(title, body);
+  const priority = ["low", "medium", "high"].includes(String(input.priority))
+    ? input.priority as AutomaticIntakeItem["priority"] : classification.priority;
+  const kind = ["claim", "request", "order", "notice", "other"].includes(String(input.kind))
+    ? input.kind as AutomaticIntakeItem["kind"] : classifyIntakeKind(title, body);
+  const receivedAt = Number.isFinite(Number(input.receivedAt)) && Number(input.receivedAt) > 0
+    ? Math.min(Number(input.receivedAt), Date.now()) : Date.now();
+  const now = Date.now();
+  const intakeId = crypto.randomUUID();
+  const taskId = crypto.randomUUID();
+  const sourceLabel = source === "email" ? "Correo" : "WhatsApp";
+  const senderLabel = senderAddress ? `${senderName} <${senderAddress}>` : senderName;
+  const attachmentNote = attachments.length
+    ? `\n\nArchivos informados (${attachments.length}): ${attachments.map((item) => item.name).join(", ")}`
+    : "";
+  const taskDescription = `${sourceLabel} recibido desde ${sourceAccount}\nRemitente: ${senderLabel}\n\n${body || "Sin descripción adicional."}${attachmentNote}\n\nIngreso ${intakeId.slice(0, 8)} · pendiente de revisión.`;
+
+  try {
+    await db.batch([
+      db.prepare(`INSERT INTO tasks
+        (id, title, description, building, priority, status, due_date, consortium_id, creator_id, assignee_id, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, 'review', NULL, ?, ?, ?, ?, ?)`).bind(
+          taskId, title, taskDescription, consortium?.name ?? "", priority,
+          consortium?.id ?? null, admin.id, admin.id, receivedAt, now,
+        ),
+      db.prepare(`INSERT INTO automatic_intake
+        (id, source, source_account, external_id, conversation_id, sender_name, sender_address,
+         title, body, kind, priority, status, consortium_id, task_id, attachments, is_test,
+         error_detail, received_at, reviewed_by_id, reviewed_at, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, '', ?, NULL, NULL, ?, ?)`).bind(
+          intakeId, source, sourceAccount, externalId, conversationId, senderName, senderAddress,
+          title, body, kind, priority, consortium?.id ?? null, taskId, JSON.stringify(attachments),
+          input.isTest ? 1 : 0, receivedAt, now, now,
+        ),
+    ]);
+  } catch (error) {
+    const raced = await db.prepare(`SELECT id, status, task_id FROM automatic_intake
+      WHERE source = ? AND source_account = ? AND external_id = ?`)
+      .bind(source, sourceAccount, externalId)
+      .first<{ id: string; status: AutomaticIntakeItem["status"]; task_id: string | null }>();
+    if (raced) return { ok: true, accepted: true, duplicate: true, intakeId: raced.id, taskId: raced.task_id, status: raced.status };
+    throw error;
+  }
+
+  return { ok: true, accepted: true, duplicate: false, intakeId, taskId, status: "pending", consortium: consortium?.name ?? null, kind, priority };
+}
+
+export async function createAutomaticIntakeTest(identity: AuthIdentity, input: {
+  source?: string; sourceAccount?: string; senderName?: string; senderAddress?: string;
+  title?: string; body?: string; consortiumId?: string | null;
+}) {
+  await requireAdmin(identity);
+  await ingestAutomaticItem({
+    ...input,
+    externalId: `test:${crypto.randomUUID()}`,
+    source: input.source === "email" ? "email" : "whatsapp",
+    sourceAccount: input.sourceAccount || (input.source === "email" ? "Correo de prueba" : "WhatsApp Línea 1"),
+    isTest: true,
+    receivedAt: Date.now(),
+  });
+  return loadWorkspace(identity);
+}
+
+export async function reviewAutomaticIntake(identity: AuthIdentity, intakeId: string, actionValue: unknown) {
+  const user = await requireAdmin(identity);
+  const action = String(actionValue ?? "");
+  if (!['accept', 'discard'].includes(action)) throw new Error("Acción de revisión desconocida");
+  const db = getDatabase();
+  const item = await db.prepare("SELECT id, status, task_id FROM automatic_intake WHERE id = ?")
+    .bind(intakeId).first<{ id: string; status: AutomaticIntakeItem["status"]; task_id: string | null }>();
+  if (!item) throw new Error("El ingreso no existe");
+  if (item.status !== "pending" && item.status !== "error") return loadWorkspace(identity);
+  const now = Date.now();
+
+  if (action === "accept") {
+    if (!item.task_id) throw new Error("La tarea asociada fue eliminada. Descartá este ingreso y pedí al demonio que lo envíe nuevamente");
+    const statements = [
+      db.prepare(`UPDATE automatic_intake SET status = 'accepted', error_detail = '', reviewed_by_id = ?,
+        reviewed_at = ?, updated_at = ? WHERE id = ?`).bind(user.id, now, now, intakeId),
+    ];
+    statements.push(db.prepare("UPDATE tasks SET status = 'pending', updated_at = ? WHERE id = ?")
+      .bind(now, item.task_id));
+    await db.batch(statements);
+  } else {
+    const statements = [
+      db.prepare(`UPDATE automatic_intake SET status = 'discarded', task_id = NULL, reviewed_by_id = ?,
+        reviewed_at = ?, updated_at = ? WHERE id = ?`).bind(user.id, now, now, intakeId),
+    ];
+    if (item.task_id) statements.push(db.prepare("DELETE FROM tasks WHERE id = ?").bind(item.task_id));
+    await db.batch(statements);
+  }
+  return loadWorkspace(identity);
 }
 
 export async function createEmailClaimTest(identity: AuthIdentity, input: {

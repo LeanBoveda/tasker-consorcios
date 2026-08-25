@@ -16,6 +16,8 @@ const claimCategoryLabels = {
   limpieza: "Limpieza", convivencia: "Convivencia", administracion: "Administración", mantenimiento: "Mantenimiento", otro: "Otro",
 };
 const claimStatusLabels = { new: "Nuevo", assigned: "Asignado", in_progress: "En gestión", waiting: "Esperando", resolved: "Resuelto", closed: "Cerrado" };
+const intakeKindLabels = { claim: "Reclamo", request: "Solicitud", order: "Pedido", notice: "Aviso", other: "Otro" };
+const intakeStatusLabels = { pending: "Por revisar", accepted: "Confirmado", discarded: "Descartado", error: "Con error" };
 
 function initials(name: string) {
   return name.split(" ").filter(Boolean).slice(0, 2).map((part) => part[0]).join("").toUpperCase();
@@ -37,10 +39,16 @@ function longDate() {
 function dateTimeLabel(value: number) {
   return new Intl.DateTimeFormat("es-AR", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }).format(new Date(value));
 }
+function fileSizeLabel(value: number | null) {
+  if (value === null) return "";
+  if (value < 1024) return `${value} B`;
+  if (value < 1024 * 1024) return `${Math.round(value / 1024)} KB`;
+  return `${(value / (1024 * 1024)).toFixed(1)} MB`;
+}
 
 export default function TaskApp({ initialData }: { initialData: WorkspaceData }) {
   const [data, setData] = useState(initialData);
-  const [view, setView] = useState<"home" | "mine" | "claims" | "mail">("home");
+  const [view, setView] = useState<"home" | "mine" | "intake" | "claims" | "mail">("home");
   const [search, setSearch] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
   const [assigneeFilter, setAssigneeFilter] = useState("all");
@@ -61,6 +69,7 @@ export default function TaskApp({ initialData }: { initialData: WorkspaceData })
     id: null, name: "", address: "", notes: "",
   });
   const [importOpen, setImportOpen] = useState(false);
+  const [intakeTestOpen, setIntakeTestOpen] = useState(false);
   const [emailTestOpen, setEmailTestOpen] = useState(false);
   const [gmailScript, setGmailScript] = useState<string | null>(null);
   const [mailDraft, setMailDraft] = useState<MailSettings | null>(initialData.mailSettings);
@@ -81,6 +90,7 @@ export default function TaskApp({ initialData }: { initialData: WorkspaceData })
     task.status === "done" && task.updatedAt > Date.now() - 7 * 86400000
   );
   const activeClaims = data.claims.filter((claim) => claim.status !== "resolved" && claim.status !== "closed");
+  const pendingIntake = data.intakeItems.filter((item) => item.status === "pending" || item.status === "error");
   const isTaskView = view === "home" || view === "mine";
   const isAdmin = data.currentUser.role === "admin";
   const draggedTask = data.tasks.find((task) => task.id === draggedTaskId) ?? null;
@@ -231,6 +241,33 @@ export default function TaskApp({ initialData }: { initialData: WorkspaceData })
       subject: form.get("subject"), body: form.get("body"), consortiumId: form.get("consortiumId") || null,
     }, "Correo procesado: reclamo y tarea creados");
     if (ok) { setEmailTestOpen(false); setView("claims"); }
+  }
+  async function submitIntakeTest(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    const source = String(form.get("source") ?? "whatsapp");
+    const ok = await mutate("/api/intake/test", "POST", {
+      source,
+      sourceAccount: form.get("sourceAccount"),
+      senderName: form.get("senderName"),
+      senderAddress: form.get("senderAddress"),
+      title: form.get("title"),
+      body: form.get("body"),
+      consortiumId: form.get("consortiumId") || null,
+    }, "Ingreso recibido: tarea creada en revisión");
+    if (ok) { event.currentTarget.reset(); setIntakeTestOpen(false); setView("intake"); }
+  }
+  async function reviewIntake(item: WorkspaceData["intakeItems"][number], action: "accept" | "discard") {
+    if (action === "discard") {
+      const confirmed = window.confirm(`¿Descartar “${item.title}”?\n\nLa tarea automática relacionada se eliminará, pero el ingreso quedará registrado.`);
+      if (!confirmed) return;
+    }
+    await mutate(`/api/intake/${item.id}`, "PATCH", { action }, action === "accept" ? "Ingreso confirmado y tarea enviada a Pendientes" : "Ingreso descartado");
+  }
+  function openIntakeTask(item: WorkspaceData["intakeItems"][number]) {
+    if (!item.taskId) return;
+    setView("home");
+    setSelectedTaskId(item.taskId);
   }
   async function copyGmailConnection() {
     setSaving(true);
@@ -403,6 +440,7 @@ export default function TaskApp({ initialData }: { initialData: WorkspaceData })
           <p className="nav-label">ESPACIO DE TRABAJO</p>
           <button className={`nav-item ${view === "home" ? "active" : ""}`} onClick={() => setView("home")}><span aria-hidden="true">⌂</span>Inicio</button>
           <button className={`nav-item ${view === "mine" ? "active" : ""}`} onClick={() => setView("mine")}><span aria-hidden="true">✓</span>Mis tareas<span className="nav-count">{activeTasks.length}</span></button>
+          {data.currentUser.role === "admin" && <button className={`nav-item ${view === "intake" ? "active" : ""}`} onClick={() => setView("intake")}><span aria-hidden="true">⇥</span>Ingresos<span className="nav-count">{pendingIntake.length}</span></button>}
           <button className={`nav-item ${view === "claims" ? "active" : ""}`} onClick={() => setView("claims")}><span aria-hidden="true">✉</span>Reclamos<span className="nav-count">{activeClaims.length}</span></button>
           {data.currentUser.role === "admin" && <button className={`nav-item ${view === "mail" ? "active" : ""}`} onClick={() => setView("mail")}><span aria-hidden="true">⚙</span>Configuración correo</button>}
           <button className="nav-item" onClick={() => setTeamOpen(true)}><span aria-hidden="true">♙</span>Equipo</button>
@@ -419,15 +457,17 @@ export default function TaskApp({ initialData }: { initialData: WorkspaceData })
       <section className="workspace">
         <header className="topbar">
           <div>
-            <p className="eyebrow">{view === "claims" ? "BANDEJA DE ENTRADA" : view === "mail" ? "AUTOMATIZACIÓN" : longDate()}</p>
-            <h1>{view === "claims" ? "Reclamos recibidos" : view === "mail" ? "Correo y recordatorios" : `Buenos días, ${firstName}`}</h1>
-            <p className="subtitle">{view === "claims" ? "Cada correo válido se convierte en un reclamo y una tarea." : view === "mail" ? "Elegí qué casilla se consulta y quién recibe cada aviso." : activeTasks.length ? `Tenés ${activeTasks.length} tareas activas para organizar.` : "Tu tablero está al día."}</p>
+            <p className="eyebrow">{view === "intake" ? "CENTRO DE INGRESOS" : view === "claims" ? "BANDEJA DE ENTRADA" : view === "mail" ? "AUTOMATIZACIÓN" : longDate()}</p>
+            <h1>{view === "intake" ? "Ingresos automáticos" : view === "claims" ? "Reclamos recibidos" : view === "mail" ? "Correo y recordatorios" : `Buenos días, ${firstName}`}</h1>
+            <p className="subtitle">{view === "intake" ? "Revisá lo que reciba el futuro demonio antes de incorporarlo al trabajo diario." : view === "claims" ? "Cada correo válido se convierte en un reclamo y una tarea." : view === "mail" ? "Elegí qué casilla se consulta y quién recibe cada aviso." : activeTasks.length ? `Tenés ${activeTasks.length} tareas activas para organizar.` : "Tu tablero está al día."}</p>
           </div>
           <div className="topbar-actions">
             {isTaskView && searchOpen && <input className="search-input" autoFocus value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar tarea o consorcio…" aria-label="Buscar" />}
             {isTaskView && <button className="icon-button" aria-label="Buscar" onClick={() => setSearchOpen((value) => !value)}>⌕</button>}
             <button className="icon-button notification" aria-label="Notificaciones" onClick={() => setNotice("No tenés notificaciones pendientes.")}>♢</button>
-            {view === "claims" && data.currentUser.role === "admin"
+            {view === "intake" && data.currentUser.role === "admin"
+              ? <button className="primary-button" onClick={() => setIntakeTestOpen(true)}><span aria-hidden="true">＋</span> Simular ingreso</button>
+              : view === "claims" && data.currentUser.role === "admin"
               ? <button className="primary-button" onClick={() => window.location.reload()}><span aria-hidden="true">↻</span> Actualizar</button>
               : view === "mail" ? <button className="primary-button" disabled={saving} onClick={copyGmailConnection}><span aria-hidden="true">⧉</span> Ver código Gmail</button>
               : <button className="primary-button" onClick={() => openNewTask()}><span aria-hidden="true">＋</span> Nueva tarea</button>}
@@ -498,7 +538,67 @@ export default function TaskApp({ initialData }: { initialData: WorkspaceData })
             <div><strong>{trashDropActive ? "Soltá para eliminar" : "Llevar al tacho"}</strong><small>Se pedirá confirmación</small></div>
           </div>
         )}
-        </> : view === "claims" ? (
+        </> : view === "intake" ? (
+          <div className="intake-view">
+            <section className="intake-ready-banner">
+              <div className="intake-ready-icon" aria-hidden="true">⇥</div>
+              <div>
+                <span className="modal-kicker">RECEPTOR PREPARADO</span>
+                <h2>Tasker ya puede recibir correo y WhatsApp</h2>
+                <p>El demonio enviará cada mensaje por un canal seguro. Tasker evitará duplicados, buscará el consorcio y dejará la tarea en revisión.</p>
+              </div>
+              <div className="intake-ready-steps" aria-label="Flujo automático">
+                <span><strong>1</strong> Recibir</span><span><strong>2</strong> Analizar</span><span><strong>3</strong> Revisar</span>
+              </div>
+            </section>
+
+            <div className="claims-summary intake-summary">
+              <article><strong>{pendingIntake.length}</strong><span>Esperando revisión</span></article>
+              <article><strong>{data.intakeItems.filter((item) => item.status === "accepted").length}</strong><span>Confirmados</span></article>
+              <article><strong>{new Set(data.intakeItems.map((item) => `${item.source}:${item.sourceAccount}`)).size}</strong><span>Fuentes detectadas</span></article>
+            </div>
+
+            <div className="claims-heading intake-heading">
+              <div><h2>Bandeja del demonio</h2><p>Confirmá los ingresos correctos o descartá el ruido. Las tareas nuevas comienzan en la columna En revisión.</p></div>
+              <button className="secondary-button" onClick={() => window.location.reload()}>↻ Actualizar</button>
+            </div>
+
+            <div className="intake-list">
+              {data.intakeItems.map((item) => (
+                <article className={`intake-card ${item.status}`} key={item.id}>
+                  <div className="intake-card-source">
+                    <span className={`intake-source-icon ${item.source}`} aria-hidden="true">{item.source === "email" ? "✉" : "◉"}</span>
+                    <div><strong>{item.source === "email" ? "Correo" : "WhatsApp"}</strong><span>{item.sourceAccount}</span></div>
+                  </div>
+                  <div className="intake-card-content">
+                    <div className="intake-badges">
+                      <span className={`intake-status ${item.status}`}>{intakeStatusLabels[item.status]}</span>
+                      <span className="claim-category">{intakeKindLabels[item.kind]}</span>
+                      <span className={`priority ${priorityLabels[item.priority].toLowerCase()}`}>{priorityLabels[item.priority]}</span>
+                      {item.isTest && <span className="claim-test">Prueba</span>}
+                    </div>
+                    <h3>{item.title}</h3>
+                    <p>{item.body || "Sin texto adicional."}</p>
+                    <div className="intake-meta">
+                      <span>De: <strong>{item.senderName}</strong>{item.senderAddress ? ` · ${item.senderAddress}` : ""}</span>
+                      <span>▦ {item.consortiumName || "Sin consorcio"}</span>
+                      <span>◷ {dateTimeLabel(item.receivedAt)}</span>
+                    </div>
+                    {item.attachments.length > 0 && <div className="intake-attachments">{item.attachments.map((attachment, index) => <span key={`${attachment.name}-${index}`}>▱ {attachment.name}{attachment.size !== null ? ` · ${fileSizeLabel(attachment.size)}` : ""}</span>)}</div>}
+                    {item.errorDetail && <p className="intake-error-detail">{item.errorDetail}</p>}
+                    {item.reviewedAt && <p className="intake-reviewed">Revisado por {item.reviewedByName || "Administrador"} · {dateTimeLabel(item.reviewedAt)}</p>}
+                  </div>
+                  <div className="intake-card-actions">
+                    {item.taskId && <button className="row-button" onClick={() => openIntakeTask(item)}>Abrir tarea</button>}
+                    {(item.status === "pending" || item.status === "error") && <button className="row-button confirm" disabled={saving} onClick={() => void reviewIntake(item, "accept")}>Confirmar</button>}
+                    {(item.status === "pending" || item.status === "error") && <button className="row-button danger" disabled={saving} onClick={() => void reviewIntake(item, "discard")}>Descartar</button>}
+                  </div>
+                </article>
+              ))}
+              {data.intakeItems.length === 0 && <div className="claims-empty intake-empty"><span aria-hidden="true">⇥</span><h3>El receptor está listo</h3><p>Realizá una simulación para comprobar el circuito antes de conectar el demonio.</p><button className="secondary-button" onClick={() => setIntakeTestOpen(true)}>Simular primer ingreso</button></div>}
+            </div>
+          </div>
+        ) : view === "claims" ? (
           <div className="claims-view">
             <section className="email-test-banner">
               <div className="email-test-icon" aria-hidden="true">✉</div>
@@ -705,6 +805,27 @@ export default function TaskApp({ initialData }: { initialData: WorkspaceData })
               ))}
               {data.consorcios.length === 0 && <p className="empty-consortia">Todavía no hay consorcios. Agregá el primero para poder seleccionarlo en las tareas.</p>}
             </div>
+          </section>
+        </div>
+      )}
+
+      {intakeTestOpen && (
+        <div className="modal-backdrop elevated" onMouseDown={() => setIntakeTestOpen(false)}>
+          <section className="modal intake-test-modal" role="dialog" aria-modal="true" aria-labelledby="intake-test-title" onMouseDown={(event) => event.stopPropagation()}>
+            <div className="modal-header"><div><span className="modal-kicker">PRUEBA DEL RECEPTOR</span><h2 id="intake-test-title">Simular mensaje del demonio</h2></div><button className="close-button" onClick={() => setIntakeTestOpen(false)} aria-label="Cerrar">×</button></div>
+            <div className="test-mode-note intake-test-note"><span aria-hidden="true">●</span><p><strong>Esta prueba sí crea una tarea.</strong> Quedará en En revisión y marcada como simulación para comprobar el flujo completo.</p></div>
+            <form onSubmit={submitIntakeTest}>
+              <div className="form-grid">
+                <label>Origen<select name="source" defaultValue="whatsapp"><option value="whatsapp">WhatsApp</option><option value="email">Correo</option></select></label>
+                <label>Cuenta o línea<input name="sourceAccount" required defaultValue="WhatsApp Línea 1" placeholder="Ej. WhatsApp Línea 1" /></label>
+                <label>Nombre del remitente<input name="senderName" required defaultValue="Vecino de prueba" /></label>
+                <label>Teléfono o email<input name="senderAddress" defaultValue="+54 11 5555-0101" /></label>
+              </div>
+              <label>Título interpretado<input name="title" required defaultValue="Reclamo por pérdida de agua" /></label>
+              <label>Mensaje limpio<textarea name="body" rows={5} required defaultValue="Informan una pérdida de agua en el palier del edificio Núñez 5157. Solicitan revisión urgente." /></label>
+              <label>Consorcio conocido<select name="consortiumId" defaultValue=""><option value="">Detectar automáticamente</option>{data.consorcios.map((item) => <option value={item.id} key={item.id}>{item.name}{item.address ? ` · ${item.address}` : ""}</option>)}</select></label>
+              <div className="modal-actions"><button type="button" className="secondary-button" onClick={() => setIntakeTestOpen(false)}>Cancelar</button><button className="primary-button" disabled={saving}>{saving ? "Procesando…" : "Enviar a Tasker"}</button></div>
+            </form>
           </section>
         </div>
       )}

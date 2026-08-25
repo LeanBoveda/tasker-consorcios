@@ -57,6 +57,13 @@
       "when": 1787267552094,
       "tag": "0007_watery_talisman",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1787628368561,
+      "tag": "0008_tearful_sprite",
+      "breakpoints": true
     }
   ]
 }

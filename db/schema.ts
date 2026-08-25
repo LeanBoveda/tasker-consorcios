@@ -86,6 +86,36 @@ export const claims = sqliteTable("claims", {
   index("idx_claims_assigned_to_id").on(table.assignedToId),
 ]);
 
+export const automaticIntake = sqliteTable("automatic_intake", {
+  id: text("id").primaryKey(),
+  source: text("source", { enum: ["email", "whatsapp"] }).notNull(),
+  sourceAccount: text("source_account").notNull().default(""),
+  externalId: text("external_id").notNull(),
+  conversationId: text("conversation_id"),
+  senderName: text("sender_name").notNull().default(""),
+  senderAddress: text("sender_address").notNull().default(""),
+  title: text("title").notNull(),
+  body: text("body").notNull().default(""),
+  kind: text("kind", { enum: ["claim", "request", "order", "notice", "other"] }).notNull().default("other"),
+  priority: text("priority", { enum: ["low", "medium", "high"] }).notNull().default("medium"),
+  status: text("status", { enum: ["pending", "accepted", "discarded", "error"] }).notNull().default("pending"),
+  consortiumId: text("consortium_id").references(() => consorcios.id, { onDelete: "set null" }),
+  taskId: text("task_id").references(() => tasks.id, { onDelete: "set null" }),
+  attachments: text("attachments").notNull().default("[]"),
+  isTest: integer("is_test", { mode: "boolean" }).notNull().default(false),
+  errorDetail: text("error_detail").notNull().default(""),
+  receivedAt: integer("received_at").notNull(),
+  reviewedById: text("reviewed_by_id").references(() => users.id, { onDelete: "set null" }),
+  reviewedAt: integer("reviewed_at"),
+  createdAt: integer("created_at").notNull(),
+  updatedAt: integer("updated_at").notNull(),
+}, (table) => [
+  uniqueIndex("automatic_intake_source_external_unique").on(table.source, table.sourceAccount, table.externalId),
+  index("idx_automatic_intake_status_created").on(table.status, table.createdAt),
+  index("idx_automatic_intake_source_account").on(table.source, table.sourceAccount, table.receivedAt),
+  index("idx_automatic_intake_task_id").on(table.taskId),
+]);
+
 export const mailSettings = sqliteTable("mail_settings", {
   id: text("id").primaryKey(),
   intakeEnabled: integer("intake_enabled", { mode: "boolean" }).notNull().default(true),
