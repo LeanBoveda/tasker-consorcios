@@ -53,6 +53,8 @@ export const comments = sqliteTable("comments", {
   id: text("id").primaryKey(),
   taskId: text("task_id").notNull().references(() => tasks.id, { onDelete: "cascade" }),
   authorId: text("author_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  source: text("source", { enum: ["manual", "email", "whatsapp", "system"] }).notNull().default("manual"),
+  externalAuthor: text("external_author").notNull().default(""),
   body: text("body").notNull(),
   createdAt: integer("created_at").notNull(),
 }, (table) => [
@@ -87,6 +89,7 @@ export const automaticIntake = sqliteTable("automatic_intake", {
   index("idx_automatic_intake_status_created").on(table.status, table.createdAt),
   index("idx_automatic_intake_source_account").on(table.source, table.sourceAccount, table.receivedAt),
   index("idx_automatic_intake_task_id").on(table.taskId),
+  index("idx_automatic_intake_conversation").on(table.source, table.sourceAccount, table.conversationId, table.receivedAt),
 ]);
 
 export const sessions = sqliteTable("sessions", {
@@ -96,4 +99,36 @@ export const sessions = sqliteTable("sessions", {
   expiresAt: integer("expires_at").notNull(),
 }, (table) => [
   index("idx_sessions_user_expires").on(table.userId, table.expiresAt),
+]);
+
+export const daemonInstances = sqliteTable("daemon_instances", {
+  id: text("id").primaryKey(),
+  name: text("name").notNull(),
+  hostName: text("host_name").notNull().default(""),
+  version: text("version").notNull().default(""),
+  status: text("status", { enum: ["online", "degraded", "error"] }).notNull().default("online"),
+  startedAt: integer("started_at").notNull(),
+  lastHeartbeatAt: integer("last_heartbeat_at").notNull(),
+  lastError: text("last_error").notNull().default(""),
+  createdAt: integer("created_at").notNull(),
+  updatedAt: integer("updated_at").notNull(),
+}, (table) => [
+  index("idx_daemon_instances_heartbeat").on(table.lastHeartbeatAt),
+]);
+
+export const daemonSources = sqliteTable("daemon_sources", {
+  id: text("id").primaryKey(),
+  instanceId: text("instance_id").notNull().references(() => daemonInstances.id, { onDelete: "cascade" }),
+  kind: text("kind", { enum: ["email", "whatsapp"] }).notNull(),
+  account: text("account").notNull(),
+  displayName: text("display_name").notNull().default(""),
+  status: text("status", { enum: ["connected", "degraded", "disconnected", "disabled"] }).notNull().default("connected"),
+  lastCheckedAt: integer("last_checked_at").notNull(),
+  lastMessageAt: integer("last_message_at"),
+  lastError: text("last_error").notNull().default(""),
+  createdAt: integer("created_at").notNull(),
+  updatedAt: integer("updated_at").notNull(),
+}, (table) => [
+  uniqueIndex("daemon_sources_instance_kind_account_unique").on(table.instanceId, table.kind, table.account),
+  index("idx_daemon_sources_instance").on(table.instanceId),
 ]);

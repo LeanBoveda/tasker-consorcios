@@ -43,7 +43,7 @@ function fileSizeLabel(value: number | null) {
 
 export default function TaskApp({ initialData }: { initialData: WorkspaceData }) {
   const [data, setData] = useState(initialData);
-  const [view, setView] = useState<"home" | "mine" | "intake">("home");
+  const [view, setView] = useState<"home" | "mine" | "intake" | "daemon">("home");
   const [search, setSearch] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
   const [assigneeFilter, setAssigneeFilter] = useState("all");
@@ -80,6 +80,12 @@ export default function TaskApp({ initialData }: { initialData: WorkspaceData })
   const pendingIntake = data.intakeItems.filter((item) => item.status === "pending" || item.status === "error");
   const isTaskView = view === "home" || view === "mine";
   const isAdmin = data.currentUser.role === "admin";
+  const connectedDaemons = data.daemons.filter((daemon) => daemon.status !== "offline" && daemon.status !== "error");
+  const pageHeader = view === "intake"
+    ? { eyebrow: "CENTRO DE INGRESOS", title: "Ingresos automáticos", subtitle: "Revisá lo que reciba el demonio antes de incorporarlo al trabajo diario." }
+    : view === "daemon"
+      ? { eyebrow: "CONEXIONES", title: "Estado del demonio", subtitle: "Controlá la computadora receptora y cada fuente vinculada." }
+      : { eyebrow: longDate(), title: `Buenos días, ${firstName}`, subtitle: activeTasks.length ? `Tenés ${activeTasks.length} tareas activas para organizar.` : "Tu tablero está al día." };
   const draggedTask = data.tasks.find((task) => task.id === draggedTaskId) ?? null;
   const canDeleteDraggedTask = Boolean(draggedTask && (isAdmin || draggedTask.creatorId === data.currentUser.id));
   const buildings = useMemo(() =>
@@ -312,6 +318,7 @@ export default function TaskApp({ initialData }: { initialData: WorkspaceData })
           <button className={`nav-item ${view === "home" ? "active" : ""}`} onClick={() => setView("home")}><span aria-hidden="true">⌂</span>Inicio</button>
           <button className={`nav-item ${view === "mine" ? "active" : ""}`} onClick={() => setView("mine")}><span aria-hidden="true">✓</span>Mis tareas<span className="nav-count">{activeTasks.length}</span></button>
           {data.currentUser.role === "admin" && <button className={`nav-item ${view === "intake" ? "active" : ""}`} onClick={() => setView("intake")}><span aria-hidden="true">⇥</span>Ingresos<span className="nav-count">{pendingIntake.length}</span></button>}
+          {data.currentUser.role === "admin" && <button className={`nav-item ${view === "daemon" ? "active" : ""}`} onClick={() => setView("daemon")}><span aria-hidden="true">◉</span>Demonio<span className={`nav-count ${connectedDaemons.length ? "connected" : ""}`}>{connectedDaemons.length}</span></button>}
           <button className="nav-item" onClick={() => setTeamOpen(true)}><span aria-hidden="true">♙</span>Equipo</button>
           <button className="nav-item" onClick={() => setConsortiaOpen(true)}><span aria-hidden="true">▦</span>Consorcios<span className="nav-count">{data.consorcios.length}</span></button>
           <button className="nav-item" onClick={() => setNotice("La actividad queda registrada dentro de cada tarea.")}><span aria-hidden="true">◷</span>Actividad</button>
@@ -326,9 +333,9 @@ export default function TaskApp({ initialData }: { initialData: WorkspaceData })
       <section className="workspace">
         <header className="topbar">
           <div>
-            <p className="eyebrow">{view === "intake" ? "CENTRO DE INGRESOS" : longDate()}</p>
-            <h1>{view === "intake" ? "Ingresos automáticos" : `Buenos días, ${firstName}`}</h1>
-            <p className="subtitle">{view === "intake" ? "Revisá lo que reciba el demonio antes de incorporarlo al trabajo diario." : activeTasks.length ? `Tenés ${activeTasks.length} tareas activas para organizar.` : "Tu tablero está al día."}</p>
+            <p className="eyebrow">{pageHeader.eyebrow}</p>
+            <h1>{pageHeader.title}</h1>
+            <p className="subtitle">{pageHeader.subtitle}</p>
           </div>
           <div className="topbar-actions">
             {isTaskView && searchOpen && <input className="search-input" autoFocus value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar tarea o consorcio…" aria-label="Buscar" />}
@@ -336,7 +343,9 @@ export default function TaskApp({ initialData }: { initialData: WorkspaceData })
             <button className="icon-button notification" aria-label="Notificaciones" onClick={() => setNotice("No tenés notificaciones pendientes.")}>♢</button>
             {view === "intake" && data.currentUser.role === "admin"
               ? <button className="primary-button" onClick={() => setIntakeTestOpen(true)}><span aria-hidden="true">＋</span> Simular ingreso</button>
-              : <button className="primary-button" onClick={() => openNewTask()}><span aria-hidden="true">＋</span> Nueva tarea</button>}
+              : view === "daemon"
+                ? <button className="secondary-button" onClick={() => window.location.reload()}>↻ Actualizar</button>
+                : <button className="primary-button" onClick={() => openNewTask()}><span aria-hidden="true">＋</span> Nueva tarea</button>}
           </div>
         </header>
 
@@ -462,6 +471,50 @@ export default function TaskApp({ initialData }: { initialData: WorkspaceData })
                 </article>
               ))}
               {data.intakeItems.length === 0 && <div className="intake-empty"><span aria-hidden="true">⇥</span><h3>El receptor está listo</h3><p>Realizá una simulación para comprobar el circuito antes de conectar el demonio.</p><button className="secondary-button" onClick={() => setIntakeTestOpen(true)}>Simular primer ingreso</button></div>}
+            </div>
+          </div>
+        ) : view === "daemon" ? (
+          <div className="daemon-view">
+            <section className={`daemon-overview ${connectedDaemons.length ? "online" : "offline"}`}>
+              <span className="daemon-overview-icon" aria-hidden="true">{connectedDaemons.length ? "●" : "○"}</span>
+              <div>
+                <span className="modal-kicker">ESTADO GENERAL</span>
+                <h2>{connectedDaemons.length ? "Demonio conectado" : "Esperando la primera conexión"}</h2>
+                <p>{connectedDaemons.length
+                  ? "La computadora de la administración está informando su estado correctamente."
+                  : "Cuando instales y vincules el demonio, su computadora y sus fuentes aparecerán acá."}</p>
+              </div>
+            </section>
+
+            <div className="daemon-list">
+              {data.daemons.map((daemon) => (
+                <article className="daemon-card" key={daemon.id}>
+                  <div className="daemon-card-head">
+                    <div><span className={`daemon-status-dot ${daemon.status}`} /><div><h3>{daemon.name}</h3><p>{daemon.hostName || "Computadora sin identificar"} · versión {daemon.version || "sin informar"}</p></div></div>
+                    <span className={`daemon-status-pill ${daemon.status}`}>{daemon.status === "online" ? "Conectado" : daemon.status === "degraded" ? "Con advertencias" : daemon.status === "error" ? "Con error" : "Sin conexión"}</span>
+                  </div>
+                  <div className="daemon-meta"><span>Última señal: <strong>{dateTimeLabel(daemon.lastHeartbeatAt)}</strong></span><span>Inicio: {dateTimeLabel(daemon.startedAt)}</span></div>
+                  {daemon.lastError && <p className="daemon-error">{daemon.lastError}</p>}
+                  <div className="daemon-source-list">
+                    {daemon.sources.map((source) => (
+                      <div className="daemon-source-row" key={source.id}>
+                        <span className={`daemon-source-icon ${source.kind}`} aria-hidden="true">{source.kind === "email" ? "✉" : "◉"}</span>
+                        <div><strong>{source.displayName || (source.kind === "email" ? "Correo central" : "WhatsApp")}</strong><span>{source.account}</span></div>
+                        <div className="daemon-source-times"><span>Revisado {dateTimeLabel(source.lastCheckedAt)}</span>{source.lastMessageAt && <small>Último mensaje {dateTimeLabel(source.lastMessageAt)}</small>}</div>
+                        <span className={`daemon-source-status ${source.status}`}>{source.status === "connected" ? "Conectado" : source.status === "degraded" ? "Advertencia" : source.status === "disabled" ? "Desactivado" : "Desconectado"}</span>
+                        {source.lastError && <p>{source.lastError}</p>}
+                      </div>
+                    ))}
+                    {daemon.sources.length === 0 && <p className="daemon-empty-sources">El demonio todavía no informó fuentes configuradas.</p>}
+                  </div>
+                </article>
+              ))}
+              {data.daemons.length === 0 && (
+                <div className="daemon-empty">
+                  <span aria-hidden="true">◉</span><h3>El receptor todavía no fue instalado</h3>
+                  <p>La primera versión comienza con la casilla central de Gmail. Solo procesará mensajes nuevos desde su activación.</p>
+                </div>
+              )}
             </div>
           </div>
         ) : null}

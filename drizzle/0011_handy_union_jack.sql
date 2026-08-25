@@ -1,0 +1,1 @@
+CREATE INDEX `idx_automatic_intake_conversation` ON `automatic_intake` (`source`,`source_account`,`conversation_id`,`received_at`);

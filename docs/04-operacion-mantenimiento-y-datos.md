@@ -30,6 +30,9 @@ Tablas verificadas en producción:
 - `consorcios`
 - `tasks`
 - `comments`
+- `automatic_intake`
+- `daemon_instances`
+- `daemon_sources`
 
 El Excel sirve para importar credenciales; no es la base de datos principal.
 
@@ -44,6 +47,9 @@ Usos habituales:
 - `comments`: revisar comentarios por tarea.
 - `consorcios`: revisar el catálogo.
 - `sessions`: diagnosticar sesiones; normalmente no debe editarse manualmente.
+- `automatic_intake`: mensajes recibidos y su vínculo con tareas.
+- `daemon_instances`: última señal de cada computadora receptora.
+- `daemon_sources`: estado de Gmail y, posteriormente, WhatsApp.
 
 ## 4. Manipulación manual
 
@@ -160,7 +166,11 @@ Probar `admin` y `admin123` únicamente si nunca se modificó el perfil. Si fue 
 
 ### Una tarea desapareció
 
-Revisar filtros y búsqueda. Confirmar que el usuario siga siendo creador o asignado. Los administradores no tienen vista global.
+Revisar filtros y búsqueda. Confirmar que el usuario siga siendo creador o asignado. Un administrador puede verla desde la vista global.
+
+### Gmail aparece desconectado
+
+Ejecutar `daemon/windows/Diagnosticar-TaskerDaemon.ps1` en la computadora receptora. Revisar Internet, la tarea programada y la autorización OAuth. El demonio conserva los mensajes en cola y reintenta cuando Tasker vuelve a responder.
 
 ### Un usuario eliminado debe volver
 

@@ -1,0 +1,9 @@
+*.token.json
+client_secret*.json
+config.toml
+data/
+logs/
+__pycache__/
+*.pyc
+.venv/
+*.egg-info/

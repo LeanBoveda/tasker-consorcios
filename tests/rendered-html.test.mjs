@@ -67,3 +67,31 @@ test("removes the legacy Gmail workflow and clears operational data", async () =
   assert.match(migration, /DROP TABLE `mail_settings`/);
   assert.doesNotMatch(envExample, /EMAIL_INTAKE_KEY/);
 });
+
+test("tracks daemon health and its connected sources", async () => {
+  const [route, schema, app, store] = await Promise.all([
+    source("app/api/daemon/heartbeat/route.ts"),
+    source("db/schema.ts"),
+    source("app/TaskApp.tsx"),
+    source("db/task-store.ts"),
+  ]);
+
+  assert.match(route, /isAuthorizedIntakeRequest/);
+  assert.match(route, /recordDaemonHeartbeat/);
+  assert.match(schema, /daemon_instances/);
+  assert.match(schema, /daemon_sources/);
+  assert.match(app, /Estado del demonio/);
+  assert.match(app, /Correo central/);
+  assert.match(store, /last_heartbeat_at/);
+});
+
+test("links incoming replies and reopens a completed recurring task", async () => {
+  const store = await source("db/task-store.ts");
+
+  assert.match(store, /classifyFollowUpSignal/);
+  assert.match(store, /action = "reopened"/);
+  assert.match(store, /Tarea reabierta automáticamente/);
+  assert.match(store, /action = "ignored_resolved"/);
+  assert.match(store, /created_after_closed_task/);
+  assert.match(store, /INSERT INTO comments/);
+});

@@ -1,0 +1,20 @@
+[tasker]
+base_url = "https://tasker-consorcios.cuentagpt050.chatgpt.site"
+intake_key = "PEGAR_LA_CLAVE_PRIVADA_DE_TASKER"
+instance_id = "administracion-principal"
+instance_name = "PC Administración"
+poll_seconds = 30
+
+[storage]
+database_path = "C:/ProgramData/TaskerDaemon/data/state.db"
+
+[gmail]
+enabled = true
+account = "sistemademon@adminbsas.com.ar"
+credentials_file = "C:/ProgramData/TaskerDaemon/config/google-client-secret.json"
+token_file = "C:/ProgramData/TaskerDaemon/config/gmail-token.json"
+query = "in:inbox -category:promotions -category:social"
+
+[logging]
+file = "C:/ProgramData/TaskerDaemon/logs/tasker-daemon.log"
+level = "INFO"

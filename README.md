@@ -21,10 +21,13 @@ Tasker es una aplicación interna para organizar el trabajo diario de una admini
 - Administración de usuarios desde la página o mediante Excel/CSV.
 - Eliminación de tareas, perfiles y consorcios con confirmación.
 - Búsqueda y filtros por persona y consorcio.
+- Bandeja de ingresos automáticos para correo y WhatsApp.
+- Panel de estado de la computadora receptora y sus fuentes.
+- Demonio local para una casilla central de Gmail, con limpieza, deduplicación y reintentos.
 
 ## Privacidad de las tareas
 
-Cada tarea solo es visible para quien la creó y, cuando corresponde, para la persona asignada. El rol administrador permite gestionar usuarios y consorcios, pero no habilita automáticamente la lectura de todas las tareas privadas.
+Cada tarea solo es visible para quien la creó y, cuando corresponde, para la persona asignada. Los administradores pueden ver todas las tareas para supervisar el trabajo general.
 
 ## Tecnología
 
@@ -34,6 +37,7 @@ Cada tarea solo es visible para quien la creó y, cuando corresponde, para la pe
 - Cloudflare D1/SQLite para la base de datos.
 - Drizzle para definir el esquema y generar migraciones.
 - OpenAI Sites para el alojamiento actual.
+- Python 3.11 para el demonio que funciona en la computadora de la administración.
 
 ## Desarrollo local
 
@@ -56,7 +60,8 @@ La documentación está dividida por audiencia:
 - [Documentación técnica](docs/03-documentacion-tecnica.md)
 - [Operación, mantenimiento y datos](docs/04-operacion-mantenimiento-y-datos.md)
 - [Referencia de API y modelo de datos](docs/05-referencia-api-y-modelo-de-datos.md)
+- [Demonio de correo y mensajería](docs/06-demonio-correo-y-mensajeria.md)
 
 ## Estado actual
 
-Versión documentada: 1.0, agosto de 2026. La aplicación está activa y publicada. Las notificaciones externas, los adjuntos y la recuperación automática de contraseñas no forman parte de la versión actual.
+Versión documentada: 1.1, agosto de 2026. Tasker está activo y el demonio 0.1 para Gmail central ya está preparado para instalar. La conexión de WhatsApp y las notificaciones externas son las siguientes etapas.

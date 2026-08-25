@@ -60,6 +60,8 @@ async function initializeDatabase() {
       id TEXT PRIMARY KEY NOT NULL,
       task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
       author_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      source TEXT NOT NULL DEFAULT 'manual' CHECK (source IN ('manual', 'email', 'whatsapp', 'system')),
+      external_author TEXT NOT NULL DEFAULT '',
       body TEXT NOT NULL,
       created_at INTEGER NOT NULL
     )`),
@@ -93,6 +95,31 @@ async function initializeDatabase() {
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL
     )`),
+    db.prepare(`CREATE TABLE IF NOT EXISTS daemon_instances (
+      id TEXT PRIMARY KEY NOT NULL,
+      name TEXT NOT NULL,
+      host_name TEXT NOT NULL DEFAULT '',
+      version TEXT NOT NULL DEFAULT '',
+      status TEXT NOT NULL DEFAULT 'online' CHECK (status IN ('online', 'degraded', 'error')),
+      started_at INTEGER NOT NULL,
+      last_heartbeat_at INTEGER NOT NULL,
+      last_error TEXT NOT NULL DEFAULT '',
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    )`),
+    db.prepare(`CREATE TABLE IF NOT EXISTS daemon_sources (
+      id TEXT PRIMARY KEY NOT NULL,
+      instance_id TEXT NOT NULL REFERENCES daemon_instances(id) ON DELETE CASCADE,
+      kind TEXT NOT NULL CHECK (kind IN ('email', 'whatsapp')),
+      account TEXT NOT NULL,
+      display_name TEXT NOT NULL DEFAULT '',
+      status TEXT NOT NULL DEFAULT 'connected' CHECK (status IN ('connected', 'degraded', 'disconnected', 'disabled')),
+      last_checked_at INTEGER NOT NULL,
+      last_message_at INTEGER,
+      last_error TEXT NOT NULL DEFAULT '',
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    )`),
   ]);
 
   const info = await db.prepare("PRAGMA table_info(users)").all<{ name: string }>();
@@ -111,6 +138,15 @@ async function initializeDatabase() {
   const taskColumns = new Set((taskInfo.results ?? []).map((column) => column.name));
   if (!taskColumns.has("consortium_id")) {
     await db.prepare("ALTER TABLE tasks ADD COLUMN consortium_id TEXT REFERENCES consorcios(id) ON DELETE SET NULL").run();
+  }
+
+  const commentInfo = await db.prepare("PRAGMA table_info(comments)").all<{ name: string }>();
+  const commentColumns = new Set((commentInfo.results ?? []).map((column) => column.name));
+  if (!commentColumns.has("source")) {
+    await db.prepare("ALTER TABLE comments ADD COLUMN source TEXT NOT NULL DEFAULT 'manual'").run();
+  }
+  if (!commentColumns.has("external_author")) {
+    await db.prepare("ALTER TABLE comments ADD COLUMN external_author TEXT NOT NULL DEFAULT ''").run();
   }
 
   const legacyBuildings = await db.prepare(`SELECT DISTINCT building
@@ -140,6 +176,10 @@ async function initializeDatabase() {
     db.prepare("CREATE INDEX IF NOT EXISTS idx_automatic_intake_status_created ON automatic_intake (status, created_at)"),
     db.prepare("CREATE INDEX IF NOT EXISTS idx_automatic_intake_source_account ON automatic_intake (source, source_account, received_at)"),
     db.prepare("CREATE INDEX IF NOT EXISTS idx_automatic_intake_task_id ON automatic_intake (task_id)"),
+    db.prepare("CREATE INDEX IF NOT EXISTS idx_automatic_intake_conversation ON automatic_intake (source, source_account, conversation_id, received_at)"),
+    db.prepare("CREATE INDEX IF NOT EXISTS idx_daemon_instances_heartbeat ON daemon_instances (last_heartbeat_at)"),
+    db.prepare("CREATE UNIQUE INDEX IF NOT EXISTS daemon_sources_instance_kind_account_unique ON daemon_sources (instance_id, kind, account)"),
+    db.prepare("CREATE INDEX IF NOT EXISTS idx_daemon_sources_instance ON daemon_sources (instance_id)"),
     db.prepare("DELETE FROM sessions WHERE expires_at <= ?").bind(Date.now()),
     db.prepare("PRAGMA optimize"),
   ]);

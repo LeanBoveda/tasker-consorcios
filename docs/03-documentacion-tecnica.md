@@ -6,7 +6,7 @@ Tasker es una aplicación full stack orientada a un equipo pequeño de administr
 
 ## 2. Arquitectura
 
-Flujo general:
+Flujo general de la aplicación:
 
 ```text
 Navegador
@@ -15,6 +15,12 @@ Navegador
   -> servicios de autenticación y tareas
   -> enlace DB
   -> Cloudflare D1 (SQLite)
+```
+
+Flujo del receptor:
+
+```text
+Gmail central -> Tasker Daemon (Windows/Python) -> API segura -> D1 -> Bandeja y tareas
 ```
 
 ### Componentes
@@ -27,6 +33,7 @@ Navegador
 | Persistencia | Cloudflare D1 | Guarda usuarios, sesiones, consorcios, tareas y comentarios. |
 | Esquema | Drizzle ORM | Define tablas, índices y migraciones. |
 | Alojamiento | OpenAI Sites | Publicación, URL y enlace de recursos. |
+| Receptor local | Python 3.11 y Gmail API | Consulta mensajes nuevos, limpia, deduplica y reintenta. |
 
 ## 3. Estructura del repositorio
 
@@ -46,6 +53,7 @@ lib/current-user.ts    Resolución de la identidad actual
 worker/index.ts        Entrada del Cloudflare Worker
 .openai/hosting.json   Enlaces lógicos de Sites
 docs/                  Documentación del proyecto
+daemon/                Servicio Python, pruebas, instalador y guías de Windows
 ```
 
 ## 4. Autenticación y sesiones
@@ -84,9 +92,9 @@ Las validaciones importantes se ejecutan en el servidor; ocultar un botón en la
 | Crear una tarea | Sí | Sí |
 | Ver una tarea creada por sí mismo | Sí | Sí |
 | Ver una tarea asignada a sí mismo | Sí | Sí |
-| Ver cualquier tarea privada | No | No |
+| Ver cualquier tarea | No | Sí |
 | Cambiar estado de una tarea visible | Sí | Sí |
-| Cambiar prioridad, asignado o consorcio | Solo creador | Solo creador |
+| Cambiar prioridad, asignado o consorcio | Solo creador | Sí |
 | Comentar una tarea visible | Sí | Sí |
 | Eliminar una tarea | Solo creador | Si la tiene visible |
 | Ver equipo y consorcios | Sí | Sí |
@@ -102,7 +110,7 @@ La consulta principal recupera una tarea únicamente cuando:
 creator_id = usuario_actual OR assignee_id = usuario_actual
 ```
 
-No existe una excepción global para el administrador. Esta regla es intencional y coincide con el mensaje de privacidad de la interfaz.
+El administrador obtiene una vista global. Un usuario común mantiene la regla `creator_id = usuario_actual OR assignee_id = usuario_actual`.
 
 ## 7. Reglas funcionales del servidor
 
@@ -156,7 +164,7 @@ Si la base no contiene un administrador activo, la aplicación crea el perfil in
 - D1: `DB`.
 - R2: no utilizado.
 
-No hay claves externas ni servicios de correo, mensajería o almacenamiento de archivos en la versión actual.
+La clave `TASKER_INTAKE_KEY` autentica al demonio. Gmail se autoriza localmente con OAuth y su token nunca se guarda en Sites ni en GitHub. R2 todavía no se utiliza.
 
 ## 11. Compilación y comandos
 
@@ -197,7 +205,8 @@ El archivo `tests/rendered-html.test.mjs` proviene del starter original y todav�
 - No hay papelera para tareas.
 - No hay exportación completa desde la interfaz.
 - No hay registro de auditoría separado de los comentarios.
-- El administrador no dispone de una vista global de tareas privadas.
+- La versión 0.1 del demonio registra metadatos de adjuntos, pero todavía no guarda sus bytes en Tasker.
+- WhatsApp todavía no está conectado.
 - La interfaz no permite editar título, descripción ni vencimiento después de crear la tarea.
 - Las pruebas automatizadas del starter deben actualizarse.
 

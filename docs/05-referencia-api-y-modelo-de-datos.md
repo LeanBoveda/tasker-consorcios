@@ -25,6 +25,10 @@
 | POST | `/api/users/import` | Importa usuarios. | Administrador. |
 | PATCH | `/api/users/:id` | Edita un perfil. | Administrador. |
 | DELETE | `/api/users/:id` | Da de baja un perfil. | Administrador. |
+| POST | `/api/intake/events` | Recibe un mensaje normalizado y deduplicado. | Clave del demonio. |
+| POST | `/api/daemon/heartbeat` | Registra estado de PC y fuentes. | Clave del demonio. |
+| POST | `/api/intake/test` | Simula un ingreso automático. | Administrador. |
+| PATCH | `/api/intake/:id` | Confirma o descarta un ingreso. | Administrador. |
 
 ## 3. Cuerpos principales
 
@@ -119,6 +123,8 @@ users 1 ----- N tasks (assignee_id, opcional)
 users 1 ----- N comments
 consorcios 1 ----- N tasks (consortium_id, opcional)
 tasks 1 ----- N comments
+tasks 1 ----- N automatic_intake
+daemon_instances 1 ----- N daemon_sources
 ```
 
 ## 5. Tabla `users`
@@ -192,12 +198,21 @@ Las sesiones vencidas se limpian durante la inicialización. Al dar de baja un u
 | `id` | TEXT | UUID, clave primaria. |
 | `task_id` | TEXT | Tarea obligatoria. |
 | `author_id` | TEXT | Autor obligatorio. |
+| `source` | TEXT | `manual`, `email`, `whatsapp` o `system`. |
+| `external_author` | TEXT | Nombre o dirección del remitente externo. |
 | `body` | TEXT | Texto obligatorio. |
 | `created_at` | INTEGER | Fecha y hora. |
 
 Índice principal: `(task_id, created_at)`.
 
-## 10. Reglas de eliminación
+## 10. Tablas de automatización
+
+- `automatic_intake` conserva el identificador externo, conversación, remitente, cuerpo limpio, clasificación, consorcio, tarea y estado de revisión.
+- La combinación de origen, cuenta e identificador externo evita reprocesar el mismo evento.
+- `daemon_instances` conserva computadora, versión, inicio y última señal.
+- `daemon_sources` conserva tipo, cuenta, conexión, último control, último mensaje y error.
+
+## 11. Reglas de eliminación
 
 | Elemento eliminado | Efecto |
 |---|---|
@@ -206,13 +221,15 @@ Las sesiones vencidas se limpian durante la inicialización. Al dar de baja un u
 | Perfil desde la página | No borra la fila; cambia a `invited` y elimina sesiones. |
 | Usuario mediante SQL físico | El esquema podría borrar tareas creadas y comentarios por cascada; no debe hacerse sin respaldo. |
 
-## 11. Forma de respuesta `WorkspaceData`
+## 12. Forma de respuesta `WorkspaceData`
 
 ```text
 currentUser   Perfil autenticado
 users         Usuarios activos
 consorcios    Catálogo completo
 tasks         Tareas visibles para currentUser, con comentarios
+intakeItems   Ingresos automáticos visibles para administradores
+daemons       Computadoras y fuentes visibles para administradores
 ```
 
 Cada operación exitosa devuelve este conjunto actualizado para que la interfaz reemplace su estado sin recargar toda la página.

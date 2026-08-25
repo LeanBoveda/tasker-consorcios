@@ -9,7 +9,8 @@ Esta carpeta reúne la documentación funcional, administrativa y técnica de Ta
 3. [Documentación técnica](03-documentacion-tecnica.md): arquitectura, seguridad, permisos, estructura del código y limitaciones.
 4. [Operación, mantenimiento y datos](04-operacion-mantenimiento-y-datos.md): alojamiento, base de datos, copias de seguridad, publicación y solución de problemas.
 5. [Referencia de API y modelo de datos](05-referencia-api-y-modelo-de-datos.md): endpoints, tablas, relaciones y reglas de integridad.
-6. [Manual completo en Word](Documentacion-Tasker-Consorcios.docx): versión consolidada para compartir, imprimir o archivar.
+6. [Demonio de correo y mensajería](06-demonio-correo-y-mensajeria.md): funcionamiento, instalación, filtros, estado y recuperación.
+7. [Manual completo en Word](Documentacion-Tasker-Consorcios.docx): versión consolidada anterior para compartir, imprimir o archivar.
 
 ## Datos de referencia
 
@@ -18,7 +19,7 @@ Esta carpeta reúne la documentación funcional, administrativa y técnica de Ta
 - Código fuente: <https://github.com/LeanBoveda/tasker-consorcios>
 - Alojamiento actual: OpenAI Sites.
 - Base de datos de producción: Cloudflare D1, enlace lógico `DB`.
-- Tablas: `users`, `sessions`, `consorcios`, `tasks` y `comments`.
+- Tablas: `users`, `sessions`, `consorcios`, `tasks`, `comments`, `automatic_intake`, `daemon_instances` y `daemon_sources`.
 
 ## Cómo mantener esta documentación
 
@@ -32,4 +33,4 @@ Cuando se agregue o modifique una función:
 
 ## Alcance
 
-La documentación cubre la versión actual. No describe como funciones disponibles los avisos por correo, WhatsApp, SMS, notificaciones push, adjuntos ni recuperación de contraseña, porque todavía no están implementados.
+La documentación cubre la primera versión del receptor de Gmail. WhatsApp, SMS, notificaciones push y almacenamiento del contenido de adjuntos todavía no están implementados.

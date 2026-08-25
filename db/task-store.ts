@@ -19,6 +19,7 @@ export type ConsortiumItem = {
 };
 export type TaskComment = {
   id: string; body: string; createdAt: number; authorId: string; authorName: string;
+  source: "manual" | "email" | "whatsapp" | "system";
 };
 export type TaskItem = {
   id: string;
@@ -68,12 +69,34 @@ export type AutomaticIntakeItem = {
   createdAt: number;
   updatedAt: number;
 };
+export type DaemonSourceItem = {
+  id: string;
+  kind: "email" | "whatsapp";
+  account: string;
+  displayName: string;
+  status: "connected" | "degraded" | "disconnected" | "disabled";
+  lastCheckedAt: number;
+  lastMessageAt: number | null;
+  lastError: string;
+};
+export type DaemonInstanceItem = {
+  id: string;
+  name: string;
+  hostName: string;
+  version: string;
+  status: "online" | "degraded" | "error" | "offline";
+  startedAt: number;
+  lastHeartbeatAt: number;
+  lastError: string;
+  sources: DaemonSourceItem[];
+};
 export type WorkspaceData = {
   currentUser: AppUser;
   users: AppUser[];
   consorcios: ConsortiumItem[];
   tasks: TaskItem[];
   intakeItems: AutomaticIntakeItem[];
+  daemons: DaemonInstanceItem[];
 };
 
 type TaskRow = {
@@ -85,7 +108,7 @@ type TaskRow = {
 };
 type CommentRow = {
   id: string; task_id: string; body: string; created_at: number;
-  author_id: string; author_name: string;
+  author_id: string; author_name: string; source: TaskComment["source"];
 };
 type AutomaticIntakeRow = {
   id: string; source: AutomaticIntakeItem["source"]; source_account: string; external_id: string;
@@ -94,6 +117,16 @@ type AutomaticIntakeRow = {
   consortium_id: string | null; consortium_name: string | null; task_id: string | null; attachments: string;
   is_test: number; error_detail: string; received_at: number; reviewed_by_name: string | null;
   reviewed_at: number | null; created_at: number; updated_at: number;
+};
+type DaemonInstanceRow = {
+  id: string; name: string; host_name: string; version: string;
+  status: "online" | "degraded" | "error"; started_at: number;
+  last_heartbeat_at: number; last_error: string;
+};
+type DaemonSourceRow = {
+  id: string; instance_id: string; kind: DaemonSourceItem["kind"]; account: string;
+  display_name: string; status: DaemonSourceItem["status"]; last_checked_at: number;
+  last_message_at: number | null; last_error: string;
 };
 
 function parseIntakeAttachments(value: string): IntakeAttachment[] {
@@ -163,12 +196,29 @@ export async function loadWorkspace(identity: AuthIdentity): Promise<WorkspaceDa
   let comments: CommentRow[] = [];
   if (taskRows.length) {
     const placeholders = taskRows.map(() => "?").join(",");
-    const result = await db.prepare(`SELECT c.id, c.task_id, c.body, c.created_at,
-        c.author_id, u.name AS author_name
+    const result = await db.prepare(`SELECT c.id, c.task_id, c.body, c.created_at, c.source,
+        c.author_id, CASE WHEN c.source <> 'manual' AND trim(c.external_author) <> ''
+          THEN c.external_author ELSE u.name END AS author_name
       FROM comments c JOIN users u ON u.id = c.author_id
       WHERE c.task_id IN (${placeholders}) ORDER BY c.created_at`)
       .bind(...taskRows.map((task) => task.id)).all<CommentRow>();
     comments = result.results ?? [];
+  }
+
+  const daemonResult = user.role === "admin"
+    ? await db.prepare(`SELECT id, name, host_name, version, status, started_at,
+        last_heartbeat_at, last_error FROM daemon_instances ORDER BY last_heartbeat_at DESC`)
+      .all<DaemonInstanceRow>()
+    : { results: [] as DaemonInstanceRow[] };
+  const daemonRows = daemonResult.results ?? [];
+  let daemonSourceRows: DaemonSourceRow[] = [];
+  if (daemonRows.length) {
+    const placeholders = daemonRows.map(() => "?").join(",");
+    const result = await db.prepare(`SELECT id, instance_id, kind, account, display_name,
+        status, last_checked_at, last_message_at, last_error FROM daemon_sources
+      WHERE instance_id IN (${placeholders}) ORDER BY kind, display_name, account`)
+      .bind(...daemonRows.map((item) => item.id)).all<DaemonSourceRow>();
+    daemonSourceRows = result.results ?? [];
   }
 
   return {
@@ -196,6 +246,7 @@ export async function loadWorkspace(identity: AuthIdentity): Promise<WorkspaceDa
         createdAt: comment.created_at,
         authorId: comment.author_id,
         authorName: comment.author_name,
+        source: comment.source,
       })),
     })),
     intakeItems: (intakeResult.results ?? []).map((item) => ({
@@ -223,6 +274,26 @@ export async function loadWorkspace(identity: AuthIdentity): Promise<WorkspaceDa
       createdAt: item.created_at,
       updatedAt: item.updated_at,
     })),
+    daemons: daemonRows.map((daemon) => ({
+      id: daemon.id,
+      name: daemon.name,
+      hostName: daemon.host_name,
+      version: daemon.version,
+      status: Date.now() - daemon.last_heartbeat_at > 180000 ? "offline" : daemon.status,
+      startedAt: daemon.started_at,
+      lastHeartbeatAt: daemon.last_heartbeat_at,
+      lastError: daemon.last_error,
+      sources: daemonSourceRows.filter((source) => source.instance_id === daemon.id).map((source) => ({
+        id: source.id,
+        kind: source.kind,
+        account: source.account,
+        displayName: source.display_name,
+        status: source.status,
+        lastCheckedAt: source.last_checked_at,
+        lastMessageAt: source.last_message_at,
+        lastError: source.last_error,
+      })),
+    })),
   };
 }
 
@@ -244,6 +315,18 @@ function classifyIntakeKind(title: string, body: string): AutomaticIntakeItem["k
   return "other";
 }
 
+function classifyFollowUpSignal(title: string, body: string) {
+  const text = normalizedText(`${title} ${body}`);
+  if (/\b(sigue|continua|persiste|volvio|nuevamente|otra vez|no se resolvio|no se soluciono|todavia|aun)\b/.test(text)) {
+    return "recurrence" as const;
+  }
+  if (/\b(ya esta solucionado|ya quedo solucionado|ya esta resuelto|ya quedo resuelto|se soluciono|problema resuelto)\b/.test(text)
+      || /\b(muchas gracias|gracias)\b[.! ]*$/.test(text)) {
+    return "resolved" as const;
+  }
+  return "unknown" as const;
+}
+
 export async function ingestAutomaticItem(input: {
   source?: string;
   sourceAccount?: string;
@@ -259,6 +342,7 @@ export async function ingestAutomaticItem(input: {
   attachments?: unknown;
   receivedAt?: number;
   isTest?: boolean;
+  followUpSignal?: string;
 }) {
   await ensureDatabase();
   const source = input.source === "whatsapp" ? "whatsapp" : input.source === "email" ? "email" : null;
@@ -314,13 +398,76 @@ export async function ingestAutomaticItem(input: {
     ? Math.min(Number(input.receivedAt), Date.now()) : Date.now();
   const now = Date.now();
   const intakeId = crypto.randomUUID();
-  const taskId = crypto.randomUUID();
+  let taskId = crypto.randomUUID();
   const sourceLabel = source === "email" ? "Correo" : "WhatsApp";
   const senderLabel = senderAddress ? `${senderName} <${senderAddress}>` : senderName;
   const attachmentNote = attachments.length
     ? `\n\nArchivos informados (${attachments.length}): ${attachments.map((item) => item.name).join(", ")}`
     : "";
   const taskDescription = `${sourceLabel} recibido desde ${sourceAccount}\nRemitente: ${senderLabel}\n\n${body || "Sin descripción adicional."}${attachmentNote}\n\nIngreso ${intakeId.slice(0, 8)} · pendiente de revisión.`;
+
+  const linked = conversationId
+    ? await db.prepare(`SELECT i.task_id, t.status AS task_status, t.consortium_id
+        FROM automatic_intake i JOIN tasks t ON t.id = i.task_id
+        WHERE i.source = ? AND i.source_account = ? AND i.conversation_id = ?
+          AND i.task_id IS NOT NULL
+        ORDER BY i.received_at DESC, i.created_at DESC LIMIT 1`)
+      .bind(source, sourceAccount, conversationId)
+      .first<{ task_id: string; task_status: TaskItem["status"]; consortium_id: string | null }>()
+    : null;
+  const followUpSignal = ["resolved", "recurrence", "unknown"].includes(String(input.followUpSignal))
+    ? input.followUpSignal as "resolved" | "recurrence" | "unknown"
+    : classifyFollowUpSignal(title, body);
+
+  if (linked && !(linked.task_status === "done" && followUpSignal === "unknown")) {
+    taskId = linked.task_id;
+    const commentBody = `${body || title}${attachmentNote}`.trim();
+    const statements = [
+      db.prepare(`INSERT INTO automatic_intake
+        (id, source, source_account, external_id, conversation_id, sender_name, sender_address,
+         title, body, kind, priority, status, consortium_id, task_id, attachments, is_test,
+         error_detail, received_at, reviewed_by_id, reviewed_at, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'accepted', ?, ?, ?, ?, '', ?, ?, ?, ?, ?)`).bind(
+          intakeId, source, sourceAccount, externalId, conversationId, senderName, senderAddress,
+          title, body, kind, priority, consortium?.id ?? linked.consortium_id, taskId,
+          JSON.stringify(attachments), input.isTest ? 1 : 0, receivedAt, admin.id, now, now, now,
+        ),
+    ];
+    let action: "commented" | "reopened" | "ignored_resolved" = "commented";
+    if (linked.task_status === "done" && followUpSignal === "resolved") {
+      action = "ignored_resolved";
+    } else {
+      statements.push(db.prepare(`INSERT INTO comments
+        (id, task_id, author_id, source, external_author, body, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)`).bind(
+          crypto.randomUUID(), taskId, admin.id, source, senderLabel, commentBody, receivedAt,
+        ));
+      if (linked.task_status === "done" && followUpSignal === "recurrence") {
+        action = "reopened";
+        statements.push(db.prepare("UPDATE tasks SET status = 'pending', updated_at = ? WHERE id = ?")
+          .bind(now, taskId));
+        statements.push(db.prepare(`INSERT INTO comments
+          (id, task_id, author_id, source, external_author, body, created_at)
+          VALUES (?, ?, ?, 'system', 'Tasker', ?, ?)`).bind(
+            crypto.randomUUID(), taskId, admin.id,
+            "Tarea reabierta automáticamente porque el nuevo mensaje indica que el problema continúa o volvió a presentarse.", now,
+          ));
+      } else {
+        statements.push(db.prepare("UPDATE tasks SET updated_at = ? WHERE id = ?").bind(now, taskId));
+      }
+    }
+    try {
+      await db.batch(statements);
+    } catch (error) {
+      const raced = await db.prepare(`SELECT id, status, task_id FROM automatic_intake
+        WHERE source = ? AND source_account = ? AND external_id = ?`)
+        .bind(source, sourceAccount, externalId)
+        .first<{ id: string; status: AutomaticIntakeItem["status"]; task_id: string | null }>();
+      if (raced) return { ok: true, accepted: true, duplicate: true, intakeId: raced.id, taskId: raced.task_id, status: raced.status };
+      throw error;
+    }
+    return { ok: true, accepted: true, duplicate: false, intakeId, taskId, status: "accepted", action };
+  }
 
   try {
     await db.batch([
@@ -349,7 +496,10 @@ export async function ingestAutomaticItem(input: {
     throw error;
   }
 
-  return { ok: true, accepted: true, duplicate: false, intakeId, taskId, status: "pending", consortium: consortium?.name ?? null, kind, priority };
+  return {
+    ok: true, accepted: true, duplicate: false, intakeId, taskId, status: "pending",
+    action: linked ? "created_after_closed_task" : "created", consortium: consortium?.name ?? null, kind, priority,
+  };
 }
 
 export async function createAutomaticIntakeTest(identity: AuthIdentity, input: {
@@ -366,6 +516,76 @@ export async function createAutomaticIntakeTest(identity: AuthIdentity, input: {
     receivedAt: Date.now(),
   });
   return loadWorkspace(identity);
+}
+
+export async function recordDaemonHeartbeat(input: {
+  instanceId?: string;
+  name?: string;
+  hostName?: string;
+  version?: string;
+  status?: string;
+  startedAt?: number;
+  lastError?: string;
+  sources?: Array<{
+    kind?: string;
+    account?: string;
+    displayName?: string;
+    status?: string;
+    lastCheckedAt?: number;
+    lastMessageAt?: number | null;
+    lastError?: string;
+  }>;
+}) {
+  await ensureDatabase();
+  const instanceId = String(input.instanceId ?? "").trim().slice(0, 200);
+  if (!instanceId) throw new Error("El demonio no informó su identificador");
+  const name = String(input.name ?? "Demonio Tasker").trim().slice(0, 200) || "Demonio Tasker";
+  const hostName = String(input.hostName ?? "").trim().slice(0, 200);
+  const version = String(input.version ?? "").trim().slice(0, 50);
+  const status = ["online", "degraded", "error"].includes(String(input.status))
+    ? String(input.status) : "online";
+  const now = Date.now();
+  const startedAt = Number.isFinite(Number(input.startedAt)) && Number(input.startedAt) > 0
+    ? Math.min(Number(input.startedAt), now) : now;
+  const lastError = String(input.lastError ?? "").trim().slice(0, 2000);
+  const db = getDatabase();
+  const statements = [
+    db.prepare(`INSERT INTO daemon_instances
+      (id, name, host_name, version, status, started_at, last_heartbeat_at, last_error, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET name = excluded.name, host_name = excluded.host_name,
+        version = excluded.version, status = excluded.status, started_at = excluded.started_at,
+        last_heartbeat_at = excluded.last_heartbeat_at, last_error = excluded.last_error,
+        updated_at = excluded.updated_at`).bind(
+          instanceId, name, hostName, version, status, startedAt, now, lastError, now, now,
+        ),
+  ];
+  for (const source of Array.isArray(input.sources) ? input.sources.slice(0, 20) : []) {
+    const kind = source.kind === "whatsapp" ? "whatsapp" : source.kind === "email" ? "email" : null;
+    const account = String(source.account ?? "").trim().slice(0, 320);
+    if (!kind || !account) continue;
+    const sourceStatus = ["connected", "degraded", "disconnected", "disabled"].includes(String(source.status))
+      ? String(source.status) : "connected";
+    const lastCheckedAt = Number.isFinite(Number(source.lastCheckedAt)) && Number(source.lastCheckedAt) > 0
+      ? Math.min(Number(source.lastCheckedAt), now) : now;
+    const lastMessageAt = Number.isFinite(Number(source.lastMessageAt)) && Number(source.lastMessageAt) > 0
+      ? Math.min(Number(source.lastMessageAt), now) : null;
+    const sourceId = `${instanceId}:${kind}:${account}`.slice(0, 500);
+    statements.push(db.prepare(`INSERT INTO daemon_sources
+      (id, instance_id, kind, account, display_name, status, last_checked_at, last_message_at,
+       last_error, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(instance_id, kind, account) DO UPDATE SET display_name = excluded.display_name,
+        status = excluded.status, last_checked_at = excluded.last_checked_at,
+        last_message_at = excluded.last_message_at, last_error = excluded.last_error,
+        updated_at = excluded.updated_at`).bind(
+          sourceId, instanceId, kind, account,
+          String(source.displayName ?? "").trim().slice(0, 200), sourceStatus,
+          lastCheckedAt, lastMessageAt, String(source.lastError ?? "").trim().slice(0, 2000), now, now,
+        ));
+  }
+  await db.batch(statements);
+  return { ok: true, serverTime: now, pollAfterSeconds: 30 };
 }
 
 export async function reviewAutomaticIntake(identity: AuthIdentity, intakeId: string, actionValue: unknown) {
