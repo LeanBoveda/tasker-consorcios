@@ -1,4 +1,7 @@
 import { ensureDatabase, getDatabase } from "./database";
+import { auditStatement, describeChanges, getAuditActor, type AuditActor } from "./activity-store";
+
+const userRoleLabel = (role: string) => role === "admin" ? "Administrador" : "Usuario";
 
 const BOOTSTRAP_SALT = "a5ce7dd3e178939670cfabadb77ce002";
 const BOOTSTRAP_HASH = "5d7607f8cf4b631c8f49e37fbe77e0bee69f001ee5d3d77c3f46db423757b1ef";
@@ -15,6 +18,7 @@ export type SessionIdentity = {
 
 type LoginRow = {
   id: string;
+  workspaceId: string;
   username: string;
   email: string;
   name: string;
@@ -112,7 +116,7 @@ export async function login(usernameValue: string, password: string) {
   const username = usernameValue.trim().toLowerCase();
   const db = getDatabase();
   const user = await db.prepare(`SELECT id, username, email, name, password_hash,
-      password_salt, password_iterations, status
+      password_salt, password_iterations, status, workspace_id AS workspaceId
     FROM users WHERE lower(username) = ?`)
     .bind(username).first<LoginRow>();
 
@@ -132,6 +136,7 @@ export async function login(usernameValue: string, password: string) {
     getDatabase().prepare("INSERT INTO sessions (id, user_id, created_at, expires_at) VALUES (?, ?, ?, ?)")
       .bind(tokenHash, user.id, now, now + SESSION_DURATION_MS),
     getDatabase().prepare("UPDATE users SET last_seen_at = ? WHERE id = ?").bind(now, user.id),
+    auditStatement(user, "session.login", "session", null, "Inicio de sesión"),
   ]);
   return { token, expiresAt: now + SESSION_DURATION_MS };
 }
@@ -154,7 +159,15 @@ export async function validateSession(token: string): Promise<SessionIdentity | 
 export async function logout(token: string) {
   if (!token) return;
   await ensureDatabase();
-  await getDatabase().prepare("DELETE FROM sessions WHERE id = ?").bind(await sha256(token)).run();
+  const db = getDatabase();
+  const hash = await sha256(token);
+  const actor = await db.prepare(`SELECT u.id, u.workspace_id AS workspaceId, u.name, u.username
+    FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.id = ? AND s.expires_at > ?`)
+    .bind(hash, Date.now()).first<AuditActor>();
+  await db.batch([
+    db.prepare("DELETE FROM sessions WHERE id = ?").bind(hash),
+    ...(actor ? [auditStatement(actor, "session.logout", "session", null, "Cierre de sesión")] : []),
+  ]);
 }
 
 export async function importUsers(currentUserId: string, rows: Array<{
@@ -166,6 +179,7 @@ export async function importUsers(currentUserId: string, rows: Array<{
   if (admin?.role !== "admin") throw new Error("Solo el administrador puede importar usuarios");
   if (!Array.isArray(rows) || rows.length === 0) throw new Error("El archivo no contiene usuarios");
   if (rows.length > 20) throw new Error("Podés importar hasta 20 usuarios por archivo");
+  const actor = await getAuditActor(currentUserId);
 
   const statements: D1PreparedStatement[] = [];
   const admins = await db.prepare("SELECT id FROM users WHERE role = 'admin' AND status = 'active' AND workspace_id = ?")
@@ -183,8 +197,8 @@ export async function importUsers(currentUserId: string, rows: Array<{
 
     const salt = randomHex(16);
     const passwordHash = await hashPassword(password, salt);
-    const existing = await db.prepare("SELECT id, workspace_id FROM users WHERE lower(username) = ?")
-      .bind(username).first<{ id: string; workspace_id: string }>();
+    const existing = await db.prepare("SELECT id, workspace_id, name, role, status FROM users WHERE lower(username) = ?")
+      .bind(username).first<{ id: string; workspace_id: string; name: string; role: string; status: string }>();
     if (existing && existing.workspace_id !== admin.workspace_id) {
       throw new Error(`El usuario "${username}" no está disponible. Elegí otro nombre de usuario para este espacio`);
     }
@@ -196,15 +210,24 @@ export async function importUsers(currentUserId: string, rows: Array<{
         password_hash = ?, password_salt = ?, password_iterations = ? WHERE id = ?`)
         .bind(name, role === "admin" || role === "administrador" ? "admin" : "member",
           passwordHash, salt, PASSWORD_ITERATIONS, existing.id));
+      statements.push(auditStatement(actor, "user.import_updated", "user", existing.id, `${name} (@${username})`, [
+        ...describeChanges({ name: existing.name, role: userRoleLabel(existing.role), status: existing.status },
+          { name, role: userRoleLabel(isAdmin ? "admin" : "member"), status: "active" },
+          { name: "Nombre", role: "Permiso", status: "Estado de la cuenta" }),
+        "Contraseña actualizada desde Excel (valor no registrado)",
+      ]));
     } else {
       const now = Date.now();
+      const userId = crypto.randomUUID();
       statements.push(db.prepare(`INSERT INTO users
         (id, auth_user_id, username, email, name, role, status, password_hash,
           password_salt, password_iterations, created_at, last_seen_at, workspace_id)
         VALUES (?, NULL, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?)`)
-        .bind(crypto.randomUUID(), username, `${crypto.randomUUID()}@tasker.local`, name,
+        .bind(userId, username, `${crypto.randomUUID()}@tasker.local`, name,
           role === "admin" || role === "administrador" ? "admin" : "member",
           passwordHash, salt, PASSWORD_ITERATIONS, now, now, admin.workspace_id));
+      statements.push(auditStatement(actor, "user.import_created", "user", userId, `${name} (@${username})`,
+        [`Permiso: ${userRoleLabel(isAdmin ? "admin" : "member")}`, "Usuario creado desde Excel"]));
     }
   }
   if (!remainingAdmins.size) throw new Error("Debe quedar al menos un administrador en este espacio");
@@ -221,8 +244,8 @@ export async function updateUserProfile(currentUserId: string, targetUserId: str
     .bind(currentUserId).first<{ role: string; workspace_id: string }>();
   if (admin?.role !== "admin") throw new Error("Solo el administrador puede modificar usuarios");
 
-  const target = await db.prepare("SELECT id, role FROM users WHERE id = ? AND status = 'active' AND workspace_id = ?")
-    .bind(targetUserId, admin.workspace_id).first<{ id: string; role: string }>();
+  const target = await db.prepare("SELECT id, role, name, username FROM users WHERE id = ? AND status = 'active' AND workspace_id = ?")
+    .bind(targetUserId, admin.workspace_id).first<{ id: string; role: string; name: string; username: string }>();
   if (!target) throw new Error("Usuario no encontrado");
 
   const username = String(input.username ?? "").trim().toLowerCase();
@@ -241,16 +264,24 @@ export async function updateUserProfile(currentUserId: string, targetUserId: str
     if ((admins?.total ?? 0) <= 1) throw new Error("Debe quedar al menos un administrador");
   }
 
+  const actor = await getAuditActor(currentUserId);
+  const changes = describeChanges({ ...target, role: userRoleLabel(target.role) },
+    { username, name, role: userRoleLabel(role) }, { username: "Usuario", name: "Nombre", role: "Permiso" });
+  if (password) changes.push("Contraseña actualizada (valor no registrado)");
+  if (!changes.length) return;
+  const statements: D1PreparedStatement[] = [];
   if (password) {
     const salt = randomHex(16);
     const passwordHash = await hashPassword(password, salt);
-    await db.prepare(`UPDATE users SET username = ?, name = ?, role = ?, password_hash = ?,
+    statements.push(db.prepare(`UPDATE users SET username = ?, name = ?, role = ?, password_hash = ?,
       password_salt = ?, password_iterations = ? WHERE id = ?`)
-      .bind(username, name, role, passwordHash, salt, PASSWORD_ITERATIONS, targetUserId).run();
+      .bind(username, name, role, passwordHash, salt, PASSWORD_ITERATIONS, targetUserId));
   } else {
-    await db.prepare("UPDATE users SET username = ?, name = ?, role = ? WHERE id = ?")
-      .bind(username, name, role, targetUserId).run();
+    statements.push(db.prepare("UPDATE users SET username = ?, name = ?, role = ? WHERE id = ?")
+      .bind(username, name, role, targetUserId));
   }
+  statements.push(auditStatement(actor, "user.updated", "user", targetUserId, `${name} (@${username})`, changes));
+  await db.batch(statements);
 }
 
 export async function deleteUserProfile(currentUserId: string, targetUserId: string) {
@@ -261,8 +292,8 @@ export async function deleteUserProfile(currentUserId: string, targetUserId: str
   if (admin?.role !== "admin") throw new Error("Solo el administrador puede eliminar usuarios");
   if (currentUserId === targetUserId) throw new Error("No podés eliminar tu propio usuario");
 
-  const target = await db.prepare("SELECT id, role FROM users WHERE id = ? AND status = 'active' AND workspace_id = ?")
-    .bind(targetUserId, admin.workspace_id).first<{ id: string; role: string }>();
+  const target = await db.prepare("SELECT id, role, name, username FROM users WHERE id = ? AND status = 'active' AND workspace_id = ?")
+    .bind(targetUserId, admin.workspace_id).first<{ id: string; role: string; name: string; username: string }>();
   if (!target) throw new Error("Usuario no encontrado");
 
   if (target.role === "admin") {
@@ -274,6 +305,8 @@ export async function deleteUserProfile(currentUserId: string, targetUserId: str
   await db.batch([
     db.prepare("UPDATE users SET status = 'invited' WHERE id = ?").bind(targetUserId),
     db.prepare("DELETE FROM sessions WHERE user_id = ?").bind(targetUserId),
+    auditStatement(await getAuditActor(currentUserId), "user.deleted", "user", targetUserId, `${target.name} (@${target.username})`,
+      ["Cuenta desactivada y sesiones cerradas. Se conserva su actividad anterior"]),
   ]);
 }
 

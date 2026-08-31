@@ -1,5 +1,24 @@
 import { index, integer, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
 
+// Snapshots intentionally have no foreign keys: deleting a task or a person
+// must not erase or rewrite the history of their actions.
+export const activityLog = sqliteTable("activity_log", {
+  id: text("id").primaryKey(),
+  workspaceId: text("workspace_id").notNull(),
+  actorId: text("actor_id").notNull(),
+  actorName: text("actor_name").notNull(),
+  actorUsername: text("actor_username").notNull().default(""),
+  action: text("action").notNull(),
+  entityType: text("entity_type").notNull(),
+  entityId: text("entity_id"),
+  entityLabel: text("entity_label").notNull(),
+  details: text("details").notNull().default("[]"),
+  createdAt: integer("created_at").notNull(),
+}, (table) => [
+  index("idx_activity_workspace_created_id").on(table.workspaceId, table.createdAt, table.id),
+  index("idx_activity_workspace_actor_created").on(table.workspaceId, table.actorId, table.createdAt),
+]);
+
 export const users = sqliteTable("users", {
   id: text("id").primaryKey(),
   workspaceId: text("workspace_id").notNull().default("main"),

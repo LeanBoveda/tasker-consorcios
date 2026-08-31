@@ -20,6 +20,12 @@ export async function ensureDatabase() {
 async function initializeDatabase() {
   const db = getDatabase();
   await db.batch([
+    db.prepare(`CREATE TABLE IF NOT EXISTS activity_log (
+      id TEXT PRIMARY KEY NOT NULL, workspace_id TEXT NOT NULL, actor_id TEXT NOT NULL,
+      actor_name TEXT NOT NULL, actor_username TEXT NOT NULL DEFAULT '', action TEXT NOT NULL,
+      entity_type TEXT NOT NULL, entity_id TEXT, entity_label TEXT NOT NULL,
+      details TEXT NOT NULL DEFAULT '[]', created_at INTEGER NOT NULL
+    )`),
     db.prepare(`CREATE TABLE IF NOT EXISTS users (
       id TEXT PRIMARY KEY NOT NULL,
       workspace_id TEXT NOT NULL DEFAULT 'main',
@@ -188,6 +194,8 @@ async function initializeDatabase() {
     db.prepare("CREATE INDEX IF NOT EXISTS idx_tasks_assignee_status ON tasks (assignee_id, status)"),
     db.prepare("CREATE INDEX IF NOT EXISTS idx_tasks_consortium_id ON tasks (consortium_id)"),
     db.prepare("CREATE INDEX IF NOT EXISTS idx_tasks_workspace ON tasks (workspace_id)"),
+    db.prepare("CREATE INDEX IF NOT EXISTS idx_activity_workspace_created_id ON activity_log (workspace_id, created_at, id)"),
+    db.prepare("CREATE INDEX IF NOT EXISTS idx_activity_workspace_actor_created ON activity_log (workspace_id, actor_id, created_at)"),
     db.prepare("CREATE INDEX IF NOT EXISTS idx_comments_task_created ON comments (task_id, created_at)"),
     db.prepare("CREATE UNIQUE INDEX IF NOT EXISTS automatic_intake_workspace_external_unique ON automatic_intake (workspace_id, source, source_account, external_id)"),
     db.prepare("CREATE INDEX IF NOT EXISTS idx_automatic_intake_status_created ON automatic_intake (status, created_at)"),

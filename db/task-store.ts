@@ -1,5 +1,18 @@
 import type { AuthIdentity } from "@/lib/current-user";
 import { ensureDatabase, getDatabase } from "./database";
+import { auditStatement, auditText, describeChanges, type AuditActor } from "./activity-store";
+
+const taskStateLabels: Record<string, string> = { pending: "Pendiente", in_progress: "En curso", review: "En revisión", done: "Finalizada" };
+const taskPriorityLabels: Record<string, string> = { low: "Baja", medium: "Media", high: "Alta" };
+const taskFieldLabels = { title: "Título", description: "Descripción", building: "Consorcio", status: "Estado", priority: "Prioridad", due_date: "Vencimiento", assignee_id: "Asignada a" };
+
+async function taskAuditValues(row: Record<string, unknown>, workspaceId: string) {
+  const person = row.assignee_id ? await getDatabase().prepare("SELECT name, username FROM users WHERE id = ? AND workspace_id = ?")
+    .bind(String(row.assignee_id), workspaceId).first<{ name: string; username: string }>() : null;
+  return { ...row, status: taskStateLabels[String(row.status)] ?? row.status,
+    priority: taskPriorityLabels[String(row.priority)] ?? row.priority,
+    assignee_id: person ? `${person.name} (@${person.username})` : "Sin asignar" };
+}
 
 export type AppUser = {
   id: string;
@@ -345,7 +358,7 @@ export async function ingestAutomaticItem(input: {
   receivedAt?: number;
   isTest?: boolean;
   followUpSignal?: string;
-}, workspaceId = "main") {
+}, workspaceId = "main", initiatedBy?: AuditActor) {
   await ensureDatabase();
   const source = input.source === "whatsapp" ? "whatsapp" : input.source === "email" ? "email" : null;
   if (!source) throw new Error("El origen debe ser email o whatsapp");
@@ -375,6 +388,8 @@ export async function ingestAutomaticItem(input: {
     WHERE role = 'admin' AND status = 'active' AND workspace_id = ? ORDER BY created_at LIMIT 1`)
     .bind(workspaceId).first<{ id: string }>();
   if (!admin) throw new Error("No hay un administrador activo para recibir el ingreso");
+  const actor = initiatedBy ?? { id: "system:daemon", name: "Demonio", username: "sistema", workspaceId };
+  if (actor.workspaceId !== workspaceId) throw new Error("Espacio de actividad inválido");
 
   let consortium: { id: string; name: string } | null = null;
   if (input.consortiumId) {
@@ -460,6 +475,10 @@ export async function ingestAutomaticItem(input: {
         statements.push(db.prepare("UPDATE tasks SET updated_at = ? WHERE id = ?").bind(now, taskId));
       }
     }
+    statements.push(auditStatement(actor, "intake.follow_up", "intake", intakeId, title, [
+      `Origen: ${sourceLabel}`, `Tarea: ${taskId}`,
+      action === "reopened" ? "Tarea reabierta por reiteración del problema" : action === "ignored_resolved" ? "Mensaje vinculado sin reabrir la tarea finalizada" : "Mensaje agregado como comentario",
+    ]));
     try {
       await db.batch(statements);
     } catch (error) {
@@ -490,6 +509,8 @@ export async function ingestAutomaticItem(input: {
           title, body, kind, priority, consortium?.id ?? null, taskId, JSON.stringify(attachments),
           input.isTest || workspaceId === "test" ? 1 : 0, receivedAt, now, now, workspaceId,
         ),
+      auditStatement(actor, initiatedBy ? "intake.simulated" : "intake.received", "intake", intakeId, title,
+        [`Origen: ${sourceLabel}`, `Tarea creada en revisión: ${taskId}`, `Consorcio: ${consortium?.name || "Sin identificar"}`]),
     ]);
   } catch (error) {
     const raced = await db.prepare(`SELECT id, status, task_id FROM automatic_intake
@@ -518,7 +539,7 @@ export async function createAutomaticIntakeTest(identity: AuthIdentity, input: {
     sourceAccount: input.sourceAccount || (input.source === "email" ? "Correo de prueba" : "WhatsApp Línea 1"),
     isTest: true,
     receivedAt: Date.now(),
-  }, user.workspaceId);
+  }, user.workspaceId, user);
   return loadWorkspace(identity);
 }
 
@@ -597,8 +618,8 @@ export async function reviewAutomaticIntake(identity: AuthIdentity, intakeId: st
   const action = String(actionValue ?? "");
   if (!['accept', 'discard'].includes(action)) throw new Error("Acción de revisión desconocida");
   const db = getDatabase();
-  const item = await db.prepare("SELECT id, status, task_id FROM automatic_intake WHERE id = ? AND workspace_id = ?")
-    .bind(intakeId, user.workspaceId).first<{ id: string; status: AutomaticIntakeItem["status"]; task_id: string | null }>();
+  const item = await db.prepare("SELECT id, title, status, task_id FROM automatic_intake WHERE id = ? AND workspace_id = ?")
+    .bind(intakeId, user.workspaceId).first<{ id: string; title: string; status: AutomaticIntakeItem["status"]; task_id: string | null }>();
   if (!item) throw new Error("El ingreso no existe");
   if (item.status !== "pending" && item.status !== "error") return loadWorkspace(identity);
   const now = Date.now();
@@ -611,6 +632,7 @@ export async function reviewAutomaticIntake(identity: AuthIdentity, intakeId: st
     ];
     statements.push(db.prepare("UPDATE tasks SET status = 'pending', updated_at = ? WHERE id = ?")
       .bind(now, item.task_id));
+    statements.push(auditStatement(user, "intake.accepted", "intake", intakeId, item.title, [`Tarea ${item.task_id}: pasa a Pendiente` ]));
     await db.batch(statements);
   } else {
     const statements = [
@@ -618,6 +640,8 @@ export async function reviewAutomaticIntake(identity: AuthIdentity, intakeId: st
         reviewed_at = ?, updated_at = ? WHERE id = ?`).bind(user.id, now, now, intakeId),
     ];
     if (item.task_id) statements.push(db.prepare("DELETE FROM tasks WHERE id = ?").bind(item.task_id));
+    statements.push(auditStatement(user, "intake.discarded", "intake", intakeId, item.title,
+      [item.task_id ? `Se eliminó la tarea asociada: ${item.task_id}` : "Sin tarea asociada"]));
     await db.batch(statements);
   }
   return loadWorkspace(identity);
@@ -649,11 +673,16 @@ export async function createTask(identity: AuthIdentity, input: {
     if (!assignee) throw new Error("La persona asignada no existe");
   }
   const now = Date.now();
-  await db.prepare(`INSERT INTO tasks
+  const taskId = crypto.randomUUID();
+  const snapshot = await taskAuditValues({ status, priority, assignee_id: input.assigneeId }, user.workspaceId);
+  await db.batch([db.prepare(`INSERT INTO tasks
     (id, title, description, building, priority, status, due_date, consortium_id, creator_id, assignee_id, created_at, updated_at, workspace_id)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-    .bind(crypto.randomUUID(), title, input.description?.trim() ?? "", building,
-      priority, status, input.dueDate || null, input.consortiumId || null, user.id, input.assigneeId || null, now, now, user.workspaceId).run();
+    .bind(taskId, title, input.description?.trim() ?? "", building,
+      priority, status, input.dueDate || null, input.consortiumId || null, user.id, input.assigneeId || null, now, now, user.workspaceId),
+    auditStatement(user, "task.created", "task", taskId, title, [`Estado: ${snapshot.status}`, `Prioridad: ${snapshot.priority}`,
+      `Asignada a: ${snapshot.assignee_id}`, `Consorcio: ${building || "Sin consorcio"}`, `Vencimiento: ${input.dueDate || "Sin fecha"}`]),
+  ]);
   return loadWorkspace(identity);
 }
 
@@ -663,8 +692,8 @@ export async function updateTask(identity: AuthIdentity, taskId: string, input: 
 }) {
   const user = await currentUser(identity);
   const db = getDatabase();
-  const task = await db.prepare("SELECT creator_id, assignee_id FROM tasks WHERE id = ? AND workspace_id = ?")
-    .bind(taskId, user.workspaceId).first<{ creator_id: string; assignee_id: string | null }>();
+  const task = await db.prepare("SELECT * FROM tasks WHERE id = ? AND workspace_id = ?")
+    .bind(taskId, user.workspaceId).first<TaskRow & Record<string, unknown>>();
   if (!task || (user.role !== "admin" && task.creator_id !== user.id && task.assignee_id !== user.id)) {
     throw new Error("Tarea no encontrada");
   }
@@ -699,8 +728,17 @@ export async function updateTask(identity: AuthIdentity, taskId: string, input: 
     }
   }
   if (!fields.length) return loadWorkspace(identity);
+  const after: Record<string, unknown> = { ...task };
+  fields.forEach((field, index) => { after[field.split(" =")[0]] = values[index]; });
+  const changes = describeChanges(await taskAuditValues(task, user.workspaceId), await taskAuditValues(after, user.workspaceId), taskFieldLabels);
+  if (!changes.length) return loadWorkspace(identity);
+  const action = changes.length === 1 && changes[0].startsWith("Estado:") ? "task.status_changed"
+    : changes.length === 1 && changes[0].startsWith("Asignada a:") ? "task.assigned" : "task.updated";
   fields.push("updated_at = ?"); values.push(Date.now(), taskId, user.workspaceId);
-  await db.prepare(`UPDATE tasks SET ${fields.join(", ")} WHERE id = ? AND workspace_id = ?`).bind(...values).run();
+  await db.batch([
+    db.prepare(`UPDATE tasks SET ${fields.join(", ")} WHERE id = ? AND workspace_id = ?`).bind(...values),
+    auditStatement(user, action, "task", taskId, String(after.title), changes),
+  ]);
   return loadWorkspace(identity);
 }
 
@@ -723,6 +761,8 @@ export async function resetOperationalData(identity: AuthIdentity) {
     db.prepare("DELETE FROM automatic_intake WHERE workspace_id = ?").bind(user.workspaceId),
     db.prepare("DELETE FROM comments WHERE task_id IN (SELECT id FROM tasks WHERE workspace_id = ?)").bind(user.workspaceId),
     db.prepare("DELETE FROM tasks WHERE workspace_id = ?").bind(user.workspaceId),
+    auditStatement(user, "workspace.cleared", "workspace", user.workspaceId, "Limpieza de datos operativos",
+      [`Tareas eliminadas: ${taskCount?.total ?? 0}`, `Comentarios eliminados: ${commentCount?.total ?? 0}`, `Ingresos eliminados: ${intakeCount?.total ?? 0}`, "Se conserva el historial de actividad"]),
     db.prepare("PRAGMA optimize"),
   ]);
 
@@ -747,9 +787,12 @@ export async function createConsortium(identity: AuthIdentity, input: {
     .bind(name, user.workspaceId).first();
   if (duplicate) throw new Error("Ya existe un consorcio con ese nombre");
   const now = Date.now();
-  await db.prepare(`INSERT INTO consorcios (id, name, address, notes, created_at, updated_at, workspace_id)
+  const consortiumId = crypto.randomUUID();
+  await db.batch([db.prepare(`INSERT INTO consorcios (id, name, address, notes, created_at, updated_at, workspace_id)
     VALUES (?, ?, ?, ?, ?, ?, ?)`)
-    .bind(crypto.randomUUID(), name, input.address?.trim() ?? "", input.notes?.trim() ?? "", now, now, user.workspaceId).run();
+    .bind(consortiumId, name, input.address?.trim() ?? "", input.notes?.trim() ?? "", now, now, user.workspaceId),
+    auditStatement(user, "consortium.created", "consortium", consortiumId, name, [`Dirección: ${auditText(input.address)}`]),
+  ]);
   return loadWorkspace(identity);
 }
 
@@ -760,17 +803,22 @@ export async function updateConsortium(identity: AuthIdentity, consortiumId: str
   const name = input.name?.trim();
   if (!name) throw new Error("El nombre del consorcio es obligatorio");
   const db = getDatabase();
-  const current = await db.prepare("SELECT id FROM consorcios WHERE id = ? AND workspace_id = ?").bind(consortiumId, user.workspaceId).first();
+  const current = await db.prepare("SELECT id, name, address, notes FROM consorcios WHERE id = ? AND workspace_id = ?")
+    .bind(consortiumId, user.workspaceId).first<{ id: string; name: string; address: string; notes: string }>();
   if (!current) throw new Error("Consorcio no encontrado");
   const duplicate = await db.prepare("SELECT id FROM consorcios WHERE name = ? COLLATE NOCASE AND id <> ? AND workspace_id = ?")
     .bind(name, consortiumId, user.workspaceId).first();
   if (duplicate) throw new Error("Ya existe un consorcio con ese nombre");
+  const changes = describeChanges(current, { name, address: input.address?.trim() ?? "", notes: input.notes?.trim() ?? "" },
+    { name: "Nombre", address: "Dirección", notes: "Notas" });
+  if (!changes.length) return loadWorkspace(identity);
   const now = Date.now();
   await db.batch([
     db.prepare(`UPDATE consorcios SET name = ?, address = ?, notes = ?, updated_at = ? WHERE id = ?`)
       .bind(name, input.address?.trim() ?? "", input.notes?.trim() ?? "", now, consortiumId),
     db.prepare("UPDATE tasks SET building = ?, updated_at = ? WHERE consortium_id = ?")
       .bind(name, now, consortiumId),
+    auditStatement(user, "consortium.updated", "consortium", consortiumId, name, changes),
   ]);
   return loadWorkspace(identity);
 }
@@ -778,11 +826,13 @@ export async function updateConsortium(identity: AuthIdentity, consortiumId: str
 export async function deleteConsortium(identity: AuthIdentity, consortiumId: string) {
   const user = await requireAdmin(identity);
   const db = getDatabase();
-  const consortium = await db.prepare("SELECT id FROM consorcios WHERE id = ? AND workspace_id = ?").bind(consortiumId, user.workspaceId).first();
+  const consortium = await db.prepare("SELECT id, name FROM consorcios WHERE id = ? AND workspace_id = ?")
+    .bind(consortiumId, user.workspaceId).first<{ id: string; name: string }>();
   if (!consortium) throw new Error("Consorcio no encontrado");
   await db.batch([
     db.prepare("UPDATE tasks SET consortium_id = NULL WHERE consortium_id = ?").bind(consortiumId),
     db.prepare("DELETE FROM consorcios WHERE id = ?").bind(consortiumId),
+    auditStatement(user, "consortium.deleted", "consortium", consortiumId, consortium.name),
   ]);
   return loadWorkspace(identity);
 }
@@ -790,13 +840,16 @@ export async function deleteConsortium(identity: AuthIdentity, consortiumId: str
 export async function deleteTask(identity: AuthIdentity, taskId: string) {
   const user = await currentUser(identity);
   const db = getDatabase();
-  const task = await db.prepare("SELECT creator_id FROM tasks WHERE id = ? AND workspace_id = ?")
-    .bind(taskId, user.workspaceId).first<{ creator_id: string }>();
+  const task = await db.prepare("SELECT creator_id, title, status FROM tasks WHERE id = ? AND workspace_id = ?")
+    .bind(taskId, user.workspaceId).first<{ creator_id: string; title: string; status: string }>();
   if (!task || (task.creator_id !== user.id && user.role !== "admin")) {
     throw new Error("No tenés permiso para eliminar esta tarea");
   }
 
-  await db.prepare("DELETE FROM tasks WHERE id = ?").bind(taskId).run();
+  await db.batch([
+    db.prepare("DELETE FROM tasks WHERE id = ?").bind(taskId),
+    auditStatement(user, "task.deleted", "task", taskId, task.title, [`Estado anterior: ${taskStateLabels[task.status] ?? task.status}`, "Se eliminaron también sus comentarios"]),
+  ]);
   return loadWorkspace(identity);
 }
 
@@ -805,8 +858,8 @@ export async function addComment(identity: AuthIdentity, taskId: string, bodyVal
   const body = bodyValue.trim();
   if (!body) throw new Error("Escribí un comentario");
   const db = getDatabase();
-  const task = await db.prepare("SELECT creator_id, assignee_id FROM tasks WHERE id = ? AND workspace_id = ?")
-    .bind(taskId, user.workspaceId).first<{ creator_id: string; assignee_id: string | null }>();
+  const task = await db.prepare("SELECT creator_id, assignee_id, title FROM tasks WHERE id = ? AND workspace_id = ?")
+    .bind(taskId, user.workspaceId).first<{ creator_id: string; assignee_id: string | null; title: string }>();
   if (!task || (user.role !== "admin" && task.creator_id !== user.id && task.assignee_id !== user.id)) {
     throw new Error("Tarea no encontrada");
   }
@@ -815,6 +868,7 @@ export async function addComment(identity: AuthIdentity, taskId: string, bodyVal
     db.prepare("INSERT INTO comments (id, task_id, author_id, body, created_at) VALUES (?, ?, ?, ?, ?)")
       .bind(crypto.randomUUID(), taskId, user.id, body, now),
     db.prepare("UPDATE tasks SET updated_at = ? WHERE id = ?").bind(now, taskId),
+    auditStatement(user, "task.commented", "task", taskId, task.title, [`Comentario: ${auditText(body)}`]),
   ]);
   return loadWorkspace(identity);
 }

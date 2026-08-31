@@ -16,6 +16,37 @@ html, body { min-height: 100%; }
 body { margin: 0; background: #f7f8f7; color: var(--ink); font-family: Arial, Helvetica, sans-serif; }
 button { font: inherit; }
 .app-shell { display: flex; min-height: 100vh; }
+.activity-view { padding: 0 32px 32px; max-width: 1300px; margin: 0 auto; }
+.activity-info { padding: 16px 20px; background: var(--green-pale); border-radius: 12px; font-size: 16px; line-height: 1.5; }
+.activity-info p { margin: 4px 0 0; }
+.activity-filters { display: flex; align-items: flex-end; flex-wrap: wrap; gap: 12px; margin: 22px 0 12px; }
+.activity-filters label { display: flex; flex-direction: column; gap: 7px; font-size: 15px; font-weight: 600; flex: 1 1 180px; }
+.activity-filters input, .activity-filters select { width: 100%; min-width: 0; padding: 11px 12px; border: 1px solid var(--line); border-radius: 8px; background: #fff; font: inherit; font-weight: 400; }
+.activity-filters input:focus-visible, .activity-filters select:focus-visible { outline: 2px solid var(--green); outline-offset: 2px; }
+.activity-feedback { font-size: 15px; color: #53665d; min-height: 24px; }
+.activity-list { list-style: none; padding: 0; margin: 8px 0; }
+.activity-entry { display: flex; gap: 16px; padding: 20px; margin-bottom: 12px; background: #fff; border: 1px solid var(--line); border-radius: 12px; }
+.activity-mark { flex: 0 0 36px; height: 36px; display: grid; place-items: center; border-radius: 50%; background: var(--green-pale); color: var(--green); font-size: 20px; }
+.activity-mark.destructive { background: #fff0ed; color: #9c3023; }
+.activity-content { flex: 1; min-width: 0; font-size: 16px; line-height: 1.5; overflow-wrap: anywhere; }
+.activity-entry-head { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 4px 16px; }
+.activity-entry-head strong span, .activity-entry-head time { color: #617068; font-weight: 400; font-size: 14px; }
+.activity-action { margin: 8px 0 4px; }
+.activity-category { display: inline-block; margin-left: 10px; padding: 1px 8px; border-radius: 10px; background: var(--soft); color: #596a61; font-size: 13px; }
+.activity-target { margin: 0; font-weight: 600; }
+.activity-content details { margin-top: 10px; }
+.activity-content summary { color: var(--green); cursor: pointer; width: fit-content; }
+.activity-content details ul { margin: 8px 0; padding-left: 20px; white-space: pre-wrap; }
+.activity-content details li { margin: 5px 0; }
+.activity-reference { color: #617068; }
+.activity-empty, .activity-error { background: #fff; padding: 24px; border: 1px solid var(--line); border-radius: 12px; font-size: 16px; }
+.activity-error { color: #9c3023; }
+.activity-more { text-align: center; margin-top: 20px; }
+@media (max-width: 700px) {
+  .activity-view { padding: 0 16px 24px; }
+  .activity-entry { padding: 14px; gap: 10px; }
+  .activity-filters label { flex-basis: 100%; }
+}
 .test-workspace-banner { display: flex; flex-wrap: wrap; gap: 6px 14px; padding: 14px 24px; border-bottom: 1px solid #e5ca8b; background: #fff5dc; color: #624315; font-size: 16px; line-height: 1.5; }
 .test-workspace-banner strong { flex-shrink: 0; }
 

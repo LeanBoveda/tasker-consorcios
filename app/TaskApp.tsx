@@ -3,6 +3,7 @@
 import { DragEvent, FormEvent, useMemo, useRef, useState } from "react";
 import type { TaskItem, WorkspaceData } from "@/db/task-store";
 import UserImport from "./UserImport";
+import ActivityLog from "./ActivityLog";
 
 const columns: Array<{ key: TaskItem["status"]; label: string; tone: string }> = [
   { key: "pending", label: "Pendientes", tone: "slate" },
@@ -43,7 +44,7 @@ function fileSizeLabel(value: number | null) {
 
 export default function TaskApp({ initialData }: { initialData: WorkspaceData }) {
   const [data, setData] = useState(initialData);
-  const [view, setView] = useState<"home" | "mine" | "intake" | "daemon">("home");
+  const [view, setView] = useState<"home" | "mine" | "intake" | "daemon" | "activity">("home");
   const [search, setSearch] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
   const [assigneeFilter, setAssigneeFilter] = useState("all");
@@ -82,7 +83,9 @@ export default function TaskApp({ initialData }: { initialData: WorkspaceData })
   const isAdmin = data.currentUser.role === "admin";
   const isTestWorkspace = data.currentUser.workspaceId === "test";
   const connectedDaemons = data.daemons.filter((daemon) => daemon.status !== "offline" && daemon.status !== "error");
-  const pageHeader = view === "intake"
+  const pageHeader = view === "activity"
+    ? { eyebrow: "HISTORIAL", title: "Actividad del equipo", subtitle: "Quién hizo cada cambio, cuándo y sobre qué registro." }
+    : view === "intake"
     ? { eyebrow: "CENTRO DE INGRESOS", title: "Ingresos automáticos", subtitle: "Revisá lo que reciba el demonio antes de incorporarlo al trabajo diario." }
     : view === "daemon"
       ? { eyebrow: "CONEXIONES", title: "Estado del demonio", subtitle: "Controlá la computadora receptora y cada fuente vinculada." }
@@ -322,7 +325,7 @@ export default function TaskApp({ initialData }: { initialData: WorkspaceData })
           {isAdmin && !isTestWorkspace && <button className={`nav-item ${view === "daemon" ? "active" : ""}`} onClick={() => setView("daemon")}><span aria-hidden="true">◉</span>Demonio<span className={`nav-count ${connectedDaemons.length ? "connected" : ""}`}>{connectedDaemons.length}</span></button>}
           <button className="nav-item" onClick={() => setTeamOpen(true)}><span aria-hidden="true">♙</span>Equipo</button>
           <button className="nav-item" onClick={() => setConsortiaOpen(true)}><span aria-hidden="true">▦</span>Consorcios<span className="nav-count">{data.consorcios.length}</span></button>
-          <button className="nav-item" onClick={() => setNotice("La actividad queda registrada dentro de cada tarea.")}><span aria-hidden="true">◷</span>Actividad</button>
+          {isAdmin && <button className={`nav-item ${view === "activity" ? "active" : ""}`} onClick={() => setView("activity")}><span aria-hidden="true">◷</span>Actividad</button>}
         </nav>
         <div className="privacy-note"><span aria-hidden="true">◉</span><div><strong>{isTestWorkspace ? "Espacio de prueba" : "Espacio privado"}</strong><small>{isTestWorkspace ? "Separado de la administración real." : "Las tareas son visibles para su creador, asignado y administradores de este espacio."}</small></div></div>
         <div className="sidebar-bottom">
@@ -347,7 +350,7 @@ export default function TaskApp({ initialData }: { initialData: WorkspaceData })
               ? <button className="primary-button" onClick={() => setIntakeTestOpen(true)}><span aria-hidden="true">＋</span> Simular ingreso</button>
               : view === "daemon"
                 ? <button className="secondary-button" onClick={() => window.location.reload()}>↻ Actualizar</button>
-                : <button className="primary-button" onClick={() => openNewTask()}><span aria-hidden="true">＋</span> Nueva tarea</button>}
+                : isTaskView ? <button className="primary-button" onClick={() => openNewTask()}><span aria-hidden="true">＋</span> Nueva tarea</button> : null}
           </div>
         </header>
 
@@ -519,7 +522,7 @@ export default function TaskApp({ initialData }: { initialData: WorkspaceData })
               )}
             </div>
           </div>
-        ) : null}
+        ) : view === "activity" && isAdmin ? <ActivityLog users={data.users} /> : null}
       </section>
 
       {newTaskOpen && (

@@ -7,7 +7,7 @@ import ts from "typescript";
 const root = new URL("../", import.meta.url);
 const main = { userId: "main-admin" };
 const sandbox = { userId: "d79be8bc-b585-4d99-9a58-1d4e17593c92" };
-let sqlite, store, auth, database, serial = 0;
+let sqlite, store, auth, database, activity, serial = 0;
 
 // Run the real stores and initializer against SQLite, using only a D1 API adapter.
 function statement(sql, args = []) {
@@ -20,7 +20,9 @@ function statement(sql, args = []) {
 }
 
 async function moduleFrom(path, replacement) {
-  const input = (await readFile(new URL(path, root), "utf8")).replace(...replacement);
+  const input = (await readFile(new URL(path, root), "utf8")).replace(...replacement)
+    .replace(/import \{[^;]+\} from "\.\/activity-store";/,
+      "const { auditStatement, auditText, describeChanges, getAuditActor } = globalThis.__workspaceTestActivity;");
   const { outputText } = ts.transpileModule(input, {
     compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
   });
@@ -31,7 +33,7 @@ beforeEach(async () => {
   sqlite = new DatabaseSync(":memory:");
   sqlite.exec("PRAGMA foreign_keys = ON");
   const migrations = (await readdir(new URL("drizzle/", root))).filter((name) => name.endsWith(".sql")).sort();
-  for (const migration of migrations.filter((name) => !name.startsWith("0012_"))) {
+  for (const migration of migrations.filter((name) => Number(name.slice(0, 4)) < 12)) {
     sqlite.exec(await readFile(new URL(`drizzle/${migration}`, root), "utf8"));
   }
   sqlite.exec(`INSERT INTO users (id, username, email, name, role, status, password_hash, password_salt, password_iterations, created_at, last_seen_at)
@@ -41,7 +43,7 @@ beforeEach(async () => {
     INSERT INTO tasks (id, title, creator_id, consortium_id, building, created_at, updated_at)
       VALUES ('main-task', 'Tarea real', 'main-member', 'main-building', 'Florida 249', 1, 1);
     INSERT INTO comments (id, task_id, author_id, body, created_at) VALUES ('main-comment', 'main-task', 'main-member', 'Comentario real', 1);`);
-  for (const migration of migrations.filter((name) => name.startsWith("0012_"))) {
+  for (const migration of migrations.filter((name) => Number(name.slice(0, 4)) >= 12)) {
     sqlite.exec(await readFile(new URL(`drizzle/${migration}`, root), "utf8"));
   }
   globalThis.__workspaceTestDb = {
@@ -62,6 +64,8 @@ beforeEach(async () => {
   globalThis.__workspaceTestServices = database;
   const replacement = ['import { ensureDatabase, getDatabase } from "./database";',
     'const { ensureDatabase, getDatabase } = globalThis.__workspaceTestServices;'];
+  activity = await moduleFrom("db/activity-store.ts", replacement);
+  globalThis.__workspaceTestActivity = activity;
   store = await moduleFrom("db/task-store.ts", replacement);
   auth = await moduleFrom("db/auth-store.ts", replacement);
   await database.ensureDatabase();
@@ -189,4 +193,132 @@ test("reset deletes only the current workspace's operations", async () => {
   await store.resetOperationalData(main);
   assert.equal((await store.loadWorkspace(sandbox)).tasks.length, 1);
   assert.equal((await store.loadWorkspace(main)).consorcios.length, 1);
+});
+
+test("activity records task lifecycle with actor snapshots and before/after values", async () => {
+  assert.equal((await activity.listActivity(main)).items.length, 0);
+  const created = await store.createTask(main, { title: "Reparar bomba", consortiumId: "main-building" });
+  const id = created.tasks.find((task) => task.title === "Reparar bomba").id;
+  await store.updateTask(main, id, { assigneeId: "main-member" });
+  await store.updateTask({ userId: "main-member" }, id, { status: "in_progress" });
+  await store.addComment({ userId: "main-member" }, id, "Proveedor avisado");
+  await store.updateTask(main, id, { title: "Revisar bomba", priority: "high", description: "Controlar presión", dueDate: "2026-09-10" });
+  const beforeNoop = (await activity.listActivity(main)).items.length;
+  await store.updateTask(main, id, { status: "in_progress" });
+  assert.equal((await activity.listActivity(main)).items.length, beforeNoop);
+  await store.deleteTask(main, id);
+  const items = (await activity.listActivity(main)).items;
+  assert.equal(items.length, 6);
+  const changed = items.find((item) => item.action === "task.status_changed");
+  assert.equal(changed.actorId, "main-member");
+  assert.equal(changed.actorName, "Miembro real");
+  assert.deepEqual(changed.details, ["Estado: Pendiente → En curso"]);
+  assert.ok(items.find((item) => item.action === "task.assigned").details[0].includes("Miembro real (@member)"));
+  assert.equal(items.find((item) => item.action === "task.deleted").entityLabel, "Revisar bomba");
+  assert.equal(items.find((item) => item.action === "task.created").entityLabel, "Reparar bomba");
+  assert.ok(items.find((item) => item.action === "task.updated").details.includes("Prioridad: Media → Alta"));
+  assert.equal(sqlite.prepare("SELECT id FROM tasks WHERE id = ?").get(id), undefined);
+});
+
+test("activity access and filters never expose another workspace or grant member access", async () => {
+  await store.createTask(main, { title: "Registro real" });
+  await store.createTask(sandbox, { title: "Registro test_100%" });
+  await assert.rejects(activity.listActivity({ userId: "main-member" }), activity.ActivityAccessError);
+  await assert.rejects(activity.listActivity({ userId: "missing" }), activity.ActivityAccessError);
+  assert.equal((await activity.listActivity(sandbox)).items.length, 1);
+  assert.equal((await activity.listActivity(main)).items.length, 1);
+  assert.equal((await activity.listActivity(sandbox, { actorId: main.userId })).items.length, 0);
+  assert.equal((await activity.listActivity(main, { search: "test" })).items.length, 0);
+  assert.equal((await activity.listActivity(sandbox, { search: "_100%" })).items.length, 1);
+  assert.equal((await activity.listActivity(sandbox, { search: "%' OR 1=1 --" })).items.length, 0);
+  assert.equal((await activity.listActivity(main, { entityType: "session" })).items.length, 0);
+  await assert.rejects(activity.listActivity(main, { cursor: "invalid" }));
+});
+
+test("activity pagination is stable for same-time events and new insertions", async () => {
+  const actor = await activity.getAuditActor(main.userId);
+  for (let index = 0; index < 7; index++) {
+    await activity.auditStatement(actor, "task.created", "task", String(index), `Histórico ${index}`).run();
+  }
+  sqlite.exec("UPDATE activity_log SET created_at = 1000");
+  const first = await activity.listActivity(main, { limit: 3 });
+  assert.equal(first.items.length, 3);
+  assert.ok(first.nextCursor);
+  await activity.auditStatement(actor, "task.created", "task", "new", "Nueva acción").run();
+  const second = await activity.listActivity(main, { limit: 3, cursor: first.nextCursor });
+  const third = await activity.listActivity(main, { limit: 3, cursor: second.nextCursor });
+  assert.equal(third.nextCursor, null);
+  const ids = [...first.items, ...second.items, ...third.items].map((item) => item.id);
+  assert.equal(ids.length, 7);
+  assert.equal(new Set(ids).size, 7);
+  assert.equal((await activity.listActivity(main)).items[0].entityLabel, "Nueva acción");
+});
+
+test("login, logout and user changes record actions without credentials or tokens", async () => {
+  const login = await auth.login("test", "test123");
+  await auth.importUsers(sandbox.userId, [{ username: "audit-helper", name: "Ayudante", role: "member", password: "super-secret-import" }]);
+  const helper = (await store.loadWorkspace(sandbox)).users.find((user) => user.username === "audit-helper");
+  await store.createTask({ userId: helper.id }, { title: "Antes de eliminar usuario" });
+  await auth.updateUserProfile(sandbox.userId, helper.id, { username: "audit-helper", name: "Nombre nuevo", role: "member", password: "super-secret-change" });
+  await auth.importUsers(sandbox.userId, [{ username: "audit-helper", name: "Importado", role: "admin", password: "super-secret-reimport" }]);
+  await auth.deleteUserProfile(sandbox.userId, helper.id);
+  await auth.logout(login.token);
+  const items = (await activity.listActivity(sandbox)).items;
+  for (const action of ["session.login", "session.logout", "user.import_created", "user.import_updated", "user.updated", "user.deleted"]) {
+    assert.ok(items.some((item) => item.action === action), action);
+  }
+  const snapshot = items.find((item) => item.actorId === helper.id);
+  assert.equal(snapshot.actorName, "Ayudante");
+  assert.equal(snapshot.entityLabel, "Antes de eliminar usuario");
+  sqlite.prepare("DELETE FROM users WHERE id = ?").run(helper.id);
+  assert.ok((await activity.listActivity(sandbox)).items.some((item) => item.id === snapshot.id));
+  const serialized = JSON.stringify(sqlite.prepare("SELECT * FROM activity_log").all());
+  for (const secret of ["test123", "super-secret-import", "super-secret-change", "super-secret-reimport", login.token, "password_hash", "password_salt"]) {
+    assert.equal(serialized.includes(secret), false, secret);
+  }
+});
+
+test("consortia, simulations and intake reviews are logged; reset preserves all history", async () => {
+  const cons = (await store.createConsortium(sandbox, { name: "Edificio test" })).consorcios[0];
+  await store.updateConsortium(sandbox, cons.id, { name: "Edificio renombrado", address: "Calle 1", notes: "Solo prueba" });
+  await store.deleteConsortium(sandbox, cons.id);
+  const simulated = await store.createAutomaticIntakeTest(sandbox, { source: "email", title: "Reclamo test" });
+  await store.reviewAutomaticIntake(sandbox, simulated.intakeItems[0].id, "accept");
+  const second = await store.createAutomaticIntakeTest(sandbox, { source: "whatsapp", title: "Descartar test" });
+  await store.reviewAutomaticIntake(sandbox, second.intakeItems.find((item) => item.title === "Descartar test").id, "discard");
+  const before = (await activity.listActivity(sandbox)).items;
+  await store.resetOperationalData(sandbox);
+  const after = (await activity.listActivity(sandbox)).items;
+  assert.equal(after.length, before.length + 1);
+  assert.ok(before.every((item) => after.some((entry) => entry.id === item.id)));
+  for (const action of ["consortium.created", "consortium.updated", "consortium.deleted", "intake.simulated", "intake.accepted", "intake.discarded", "workspace.cleared"]) {
+    assert.ok(after.some((item) => item.action === action), action);
+  }
+  assert.equal(after.find((item) => item.action === "intake.simulated").actorId, sandbox.userId);
+  assert.equal((await activity.listActivity(main)).items.length, 0);
+});
+
+test("daemon events are attributed to the system and retries do not duplicate audit entries", async () => {
+  const event = { source: "email", sourceAccount: "central", externalId: "one", conversationId: "conversation", title: "Reclamo" };
+  await store.ingestAutomaticItem(event);
+  await store.ingestAutomaticItem(event);
+  await store.ingestAutomaticItem({ ...event, externalId: "two", body: "Sigue el problema" });
+  const items = (await activity.listActivity(main)).items;
+  assert.equal(items.length, 2);
+  assert.ok(items.every((item) => item.actorId === "system:daemon"));
+  assert.ok(items.some((item) => item.action === "intake.follow_up"));
+});
+
+test("failed and unauthorized mutations never claim success; audit failure rolls back the mutation", async () => {
+  await assert.rejects(store.deleteTask(sandbox, "main-task"));
+  await assert.rejects(auth.login("test", "wrong"));
+  assert.equal((await activity.listActivity(sandbox)).items.length, 0);
+  sqlite.exec("CREATE TRIGGER fail_audit BEFORE INSERT ON activity_log BEGIN SELECT RAISE(ABORT, 'audit unavailable'); END");
+  await assert.rejects(store.createTask(main, { title: "Must roll back" }));
+  await assert.rejects(store.deleteTask(main, "main-task"));
+  await assert.rejects(auth.login("test", "test123"));
+  assert.equal(sqlite.prepare("SELECT count(*) AS n FROM tasks").get().n, 1);
+  assert.equal(sqlite.prepare("SELECT count(*) AS n FROM comments").get().n, 1);
+  assert.equal(sqlite.prepare("SELECT count(*) AS n FROM sessions").get().n, 0);
+  assert.equal(sqlite.prepare("SELECT count(*) AS n FROM activity_log").get().n, 0);
 });
