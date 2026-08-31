@@ -80,6 +80,7 @@ export default function TaskApp({ initialData }: { initialData: WorkspaceData })
   const pendingIntake = data.intakeItems.filter((item) => item.status === "pending" || item.status === "error");
   const isTaskView = view === "home" || view === "mine";
   const isAdmin = data.currentUser.role === "admin";
+  const isTestWorkspace = data.currentUser.workspaceId === "test";
   const connectedDaemons = data.daemons.filter((daemon) => daemon.status !== "offline" && daemon.status !== "error");
   const pageHeader = view === "intake"
     ? { eyebrow: "CENTRO DE INGRESOS", title: "Ingresos automáticos", subtitle: "Revisá lo que reciba el demonio antes de incorporarlo al trabajo diario." }
@@ -318,12 +319,12 @@ export default function TaskApp({ initialData }: { initialData: WorkspaceData })
           <button className={`nav-item ${view === "home" ? "active" : ""}`} onClick={() => setView("home")}><span aria-hidden="true">⌂</span>Inicio</button>
           <button className={`nav-item ${view === "mine" ? "active" : ""}`} onClick={() => setView("mine")}><span aria-hidden="true">✓</span>Mis tareas<span className="nav-count">{activeTasks.length}</span></button>
           {data.currentUser.role === "admin" && <button className={`nav-item ${view === "intake" ? "active" : ""}`} onClick={() => setView("intake")}><span aria-hidden="true">⇥</span>Ingresos<span className="nav-count">{pendingIntake.length}</span></button>}
-          {data.currentUser.role === "admin" && <button className={`nav-item ${view === "daemon" ? "active" : ""}`} onClick={() => setView("daemon")}><span aria-hidden="true">◉</span>Demonio<span className={`nav-count ${connectedDaemons.length ? "connected" : ""}`}>{connectedDaemons.length}</span></button>}
+          {isAdmin && !isTestWorkspace && <button className={`nav-item ${view === "daemon" ? "active" : ""}`} onClick={() => setView("daemon")}><span aria-hidden="true">◉</span>Demonio<span className={`nav-count ${connectedDaemons.length ? "connected" : ""}`}>{connectedDaemons.length}</span></button>}
           <button className="nav-item" onClick={() => setTeamOpen(true)}><span aria-hidden="true">♙</span>Equipo</button>
           <button className="nav-item" onClick={() => setConsortiaOpen(true)}><span aria-hidden="true">▦</span>Consorcios<span className="nav-count">{data.consorcios.length}</span></button>
           <button className="nav-item" onClick={() => setNotice("La actividad queda registrada dentro de cada tarea.")}><span aria-hidden="true">◷</span>Actividad</button>
         </nav>
-        <div className="privacy-note"><span aria-hidden="true">◉</span><div><strong>Espacio privado</strong><small>Solo creador y asignado ven cada tarea.</small></div></div>
+        <div className="privacy-note"><span aria-hidden="true">◉</span><div><strong>{isTestWorkspace ? "Espacio de prueba" : "Espacio privado"}</strong><small>{isTestWorkspace ? "Separado de la administración real." : "Las tareas son visibles para su creador, asignado y administradores de este espacio."}</small></div></div>
         <div className="sidebar-bottom">
           <button className="team-card" onClick={() => setTeamOpen(true)}><span className="status-dot" /><div><strong>Equipo</strong><span>{data.users.length} integrantes registrados</span></div></button>
           <button className="profile-button" onClick={signOut} title="Cerrar sesión"><span className="avatar avatar-owner">{initials(data.currentUser.name)}</span><span><strong>{data.currentUser.name}</strong><small>@{data.currentUser.username} · {data.currentUser.role === "admin" ? "Administrador" : "Integrante"}</small></span><span className="signout-label">Salir</span></button>
@@ -331,6 +332,7 @@ export default function TaskApp({ initialData }: { initialData: WorkspaceData })
       </aside>
 
       <section className="workspace">
+        {isTestWorkspace && <aside className="test-workspace-banner" role="note"><strong>Modo de prueba</strong><span>Usuarios, consorcios, tareas e ingresos independientes. Nada de este espacio modifica los datos de la administración.</span></aside>}
         <header className="topbar">
           <div>
             <p className="eyebrow">{pageHeader.eyebrow}</p>
@@ -532,7 +534,7 @@ export default function TaskApp({ initialData }: { initialData: WorkspaceData })
                 <label>Prioridad<select name="priority" defaultValue="medium"><option value="low">Baja</option><option value="medium">Media</option><option value="high">Alta</option></select></label>
                 <label>Asignar a<select name="assigneeId" defaultValue=""><option value="">Solo para mí</option>{data.users.map((user) => <option value={user.id} key={user.id}>{user.name}</option>)}</select></label>
               </div>
-              <div className="privacy-banner"><span aria-hidden="true">●</span><p><strong>Privacidad automática</strong> Si no asignás a nadie, solo vos y los administradores podrán ver esta tarea. Al asignarla, también podrá verla y comentarla la persona elegida.</p></div>
+              <div className="privacy-banner"><span aria-hidden="true">●</span><p><strong>Privacidad automática</strong> Si no asignás a nadie, solo vos y los administradores de este espacio podrán ver esta tarea. Al asignarla, también podrá verla y comentarla la persona elegida.</p></div>
               <div className="modal-actions"><button type="button" className="secondary-button" onClick={() => setNewTaskOpen(false)}>Cancelar</button><button className="primary-button" disabled={saving}>{saving ? "Guardando…" : "Crear tarea"}</button></div>
             </form>
           </section>

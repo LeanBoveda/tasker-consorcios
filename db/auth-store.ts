@@ -71,7 +71,7 @@ export async function ensureBootstrapAdmin() {
   await ensureDatabase();
   const db = getDatabase();
   const bootstrapAdmin = await db.prepare(
-    "SELECT id, password_hash, password_iterations FROM users WHERE email = 'admin@tasker.local'"
+    "SELECT id, password_hash, password_iterations FROM users WHERE email = 'admin@tasker.local' AND workspace_id = 'main'"
   ).first<{ id: string; password_hash: string | null; password_iterations: number }>();
   if (bootstrapAdmin?.password_hash && bootstrapAdmin.password_iterations <= PASSWORD_ITERATIONS) return;
   if (bootstrapAdmin) {
@@ -82,7 +82,7 @@ export async function ensureBootstrapAdmin() {
   }
 
   const configured = await db.prepare(
-    "SELECT id, password_hash, password_iterations FROM users WHERE username = 'admin'"
+    "SELECT id, password_hash, password_iterations FROM users WHERE username = 'admin' AND workspace_id = 'main'"
   ).first<{ id: string; password_hash: string | null; password_iterations: number }>();
   if (configured?.password_hash && configured.password_iterations <= PASSWORD_ITERATIONS) return;
 
@@ -95,7 +95,7 @@ export async function ensureBootstrapAdmin() {
   }
 
   const existingAdmin = await db.prepare(
-    "SELECT id FROM users WHERE role = 'admin' AND status = 'active' ORDER BY created_at LIMIT 1"
+    "SELECT id FROM users WHERE role = 'admin' AND status = 'active' AND workspace_id = 'main' ORDER BY created_at LIMIT 1"
   ).first<{ id: string }>();
   if (existingAdmin) return;
 
@@ -162,12 +162,15 @@ export async function importUsers(currentUserId: string, rows: Array<{
 }>) {
   await ensureBootstrapAdmin();
   const db = getDatabase();
-  const admin = await db.prepare("SELECT role FROM users WHERE id = ?").bind(currentUserId).first<{ role: string }>();
+  const admin = await db.prepare("SELECT role, workspace_id FROM users WHERE id = ? AND status = 'active'").bind(currentUserId).first<{ role: string; workspace_id: string }>();
   if (admin?.role !== "admin") throw new Error("Solo el administrador puede importar usuarios");
   if (!Array.isArray(rows) || rows.length === 0) throw new Error("El archivo no contiene usuarios");
   if (rows.length > 20) throw new Error("Podés importar hasta 20 usuarios por archivo");
 
   const statements: D1PreparedStatement[] = [];
+  const admins = await db.prepare("SELECT id FROM users WHERE role = 'admin' AND status = 'active' AND workspace_id = ?")
+    .bind(admin.workspace_id).all<{ id: string }>();
+  const remainingAdmins = new Set((admins.results ?? []).map((user) => user.id));
   const seen = new Set<string>();
   for (const [index, row] of rows.entries()) {
     const username = String(row.username ?? "").trim().toLowerCase();
@@ -180,8 +183,14 @@ export async function importUsers(currentUserId: string, rows: Array<{
 
     const salt = randomHex(16);
     const passwordHash = await hashPassword(password, salt);
-    const existing = await db.prepare("SELECT id FROM users WHERE lower(username) = ?")
-      .bind(username).first<{ id: string }>();
+    const existing = await db.prepare("SELECT id, workspace_id FROM users WHERE lower(username) = ?")
+      .bind(username).first<{ id: string; workspace_id: string }>();
+    if (existing && existing.workspace_id !== admin.workspace_id) {
+      throw new Error(`El usuario "${username}" no está disponible. Elegí otro nombre de usuario para este espacio`);
+    }
+    const isAdmin = role === "admin" || role === "administrador";
+    if (existing && !isAdmin) remainingAdmins.delete(existing.id);
+    if (isAdmin) remainingAdmins.add(existing?.id ?? username);
     if (existing) {
       statements.push(db.prepare(`UPDATE users SET name = ?, role = ?, status = 'active',
         password_hash = ?, password_salt = ?, password_iterations = ? WHERE id = ?`)
@@ -191,13 +200,14 @@ export async function importUsers(currentUserId: string, rows: Array<{
       const now = Date.now();
       statements.push(db.prepare(`INSERT INTO users
         (id, auth_user_id, username, email, name, role, status, password_hash,
-          password_salt, password_iterations, created_at, last_seen_at)
-        VALUES (?, NULL, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?)`)
+          password_salt, password_iterations, created_at, last_seen_at, workspace_id)
+        VALUES (?, NULL, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?)`)
         .bind(crypto.randomUUID(), username, `${crypto.randomUUID()}@tasker.local`, name,
           role === "admin" || role === "administrador" ? "admin" : "member",
-          passwordHash, salt, PASSWORD_ITERATIONS, now, now));
+          passwordHash, salt, PASSWORD_ITERATIONS, now, now, admin.workspace_id));
     }
   }
+  if (!remainingAdmins.size) throw new Error("Debe quedar al menos un administrador en este espacio");
   await db.batch(statements);
   await db.prepare("PRAGMA optimize").run();
 }
@@ -207,12 +217,12 @@ export async function updateUserProfile(currentUserId: string, targetUserId: str
 }) {
   await ensureBootstrapAdmin();
   const db = getDatabase();
-  const admin = await db.prepare("SELECT role FROM users WHERE id = ?")
-    .bind(currentUserId).first<{ role: string }>();
+  const admin = await db.prepare("SELECT role, workspace_id FROM users WHERE id = ? AND status = 'active'")
+    .bind(currentUserId).first<{ role: string; workspace_id: string }>();
   if (admin?.role !== "admin") throw new Error("Solo el administrador puede modificar usuarios");
 
-  const target = await db.prepare("SELECT id, role FROM users WHERE id = ? AND status = 'active'")
-    .bind(targetUserId).first<{ id: string; role: string }>();
+  const target = await db.prepare("SELECT id, role FROM users WHERE id = ? AND status = 'active' AND workspace_id = ?")
+    .bind(targetUserId, admin.workspace_id).first<{ id: string; role: string }>();
   if (!target) throw new Error("Usuario no encontrado");
 
   const username = String(input.username ?? "").trim().toLowerCase();
@@ -226,8 +236,8 @@ export async function updateUserProfile(currentUserId: string, targetUserId: str
   if (duplicate) throw new Error(`El usuario "${username}" ya existe`);
 
   if (target.role === "admin" && role !== "admin") {
-    const admins = await db.prepare("SELECT count(*) AS total FROM users WHERE role = 'admin' AND status = 'active'")
-      .first<{ total: number }>();
+    const admins = await db.prepare("SELECT count(*) AS total FROM users WHERE role = 'admin' AND status = 'active' AND workspace_id = ?")
+      .bind(admin.workspace_id).first<{ total: number }>();
     if ((admins?.total ?? 0) <= 1) throw new Error("Debe quedar al menos un administrador");
   }
 
@@ -246,18 +256,18 @@ export async function updateUserProfile(currentUserId: string, targetUserId: str
 export async function deleteUserProfile(currentUserId: string, targetUserId: string) {
   await ensureBootstrapAdmin();
   const db = getDatabase();
-  const admin = await db.prepare("SELECT role FROM users WHERE id = ? AND status = 'active'")
-    .bind(currentUserId).first<{ role: string }>();
+  const admin = await db.prepare("SELECT role, workspace_id FROM users WHERE id = ? AND status = 'active'")
+    .bind(currentUserId).first<{ role: string; workspace_id: string }>();
   if (admin?.role !== "admin") throw new Error("Solo el administrador puede eliminar usuarios");
   if (currentUserId === targetUserId) throw new Error("No podés eliminar tu propio usuario");
 
-  const target = await db.prepare("SELECT id, role FROM users WHERE id = ? AND status = 'active'")
-    .bind(targetUserId).first<{ id: string; role: string }>();
+  const target = await db.prepare("SELECT id, role FROM users WHERE id = ? AND status = 'active' AND workspace_id = ?")
+    .bind(targetUserId, admin.workspace_id).first<{ id: string; role: string }>();
   if (!target) throw new Error("Usuario no encontrado");
 
   if (target.role === "admin") {
-    const admins = await db.prepare("SELECT count(*) AS total FROM users WHERE role = 'admin' AND status = 'active'")
-      .first<{ total: number }>();
+    const admins = await db.prepare("SELECT count(*) AS total FROM users WHERE role = 'admin' AND status = 'active' AND workspace_id = ?")
+      .bind(admin.workspace_id).first<{ total: number }>();
     if ((admins?.total ?? 0) <= 1) throw new Error("Debe quedar al menos un administrador");
   }
 

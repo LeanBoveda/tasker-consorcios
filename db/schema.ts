@@ -2,6 +2,7 @@ import { index, integer, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqli
 
 export const users = sqliteTable("users", {
   id: text("id").primaryKey(),
+  workspaceId: text("workspace_id").notNull().default("main"),
   authUserId: text("auth_user_id"),
   username: text("username"),
   email: text("email").notNull(),
@@ -21,17 +22,19 @@ export const users = sqliteTable("users", {
 
 export const consorcios = sqliteTable("consorcios", {
   id: text("id").primaryKey(),
+  workspaceId: text("workspace_id").notNull().default("main"),
   name: text("name").notNull(),
   address: text("address").notNull().default(""),
   notes: text("notes").notNull().default(""),
   createdAt: integer("created_at").notNull(),
   updatedAt: integer("updated_at").notNull(),
 }, (table) => [
-  uniqueIndex("consorcios_name_unique").on(table.name),
+  uniqueIndex("consorcios_workspace_name_unique").on(table.workspaceId, table.name),
 ]);
 
 export const tasks = sqliteTable("tasks", {
   id: text("id").primaryKey(),
+  workspaceId: text("workspace_id").notNull().default("main"),
   title: text("title").notNull(),
   description: text("description").notNull().default(""),
   building: text("building").notNull().default(""),
@@ -44,6 +47,7 @@ export const tasks = sqliteTable("tasks", {
   createdAt: integer("created_at").notNull(),
   updatedAt: integer("updated_at").notNull(),
 }, (table) => [
+  index("idx_tasks_workspace").on(table.workspaceId),
   index("idx_tasks_creator_status").on(table.creatorId, table.status),
   index("idx_tasks_assignee_status").on(table.assigneeId, table.status),
   index("idx_tasks_consortium_id").on(table.consortiumId),
@@ -63,6 +67,7 @@ export const comments = sqliteTable("comments", {
 
 export const automaticIntake = sqliteTable("automatic_intake", {
   id: text("id").primaryKey(),
+  workspaceId: text("workspace_id").notNull().default("main"),
   source: text("source", { enum: ["email", "whatsapp"] }).notNull(),
   sourceAccount: text("source_account").notNull().default(""),
   externalId: text("external_id").notNull(),
@@ -85,7 +90,7 @@ export const automaticIntake = sqliteTable("automatic_intake", {
   createdAt: integer("created_at").notNull(),
   updatedAt: integer("updated_at").notNull(),
 }, (table) => [
-  uniqueIndex("automatic_intake_source_external_unique").on(table.source, table.sourceAccount, table.externalId),
+  uniqueIndex("automatic_intake_workspace_external_unique").on(table.workspaceId, table.source, table.sourceAccount, table.externalId),
   index("idx_automatic_intake_status_created").on(table.status, table.createdAt),
   index("idx_automatic_intake_source_account").on(table.source, table.sourceAccount, table.receivedAt),
   index("idx_automatic_intake_task_id").on(table.taskId),

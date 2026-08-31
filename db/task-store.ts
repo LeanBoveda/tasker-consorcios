@@ -3,6 +3,7 @@ import { ensureDatabase, getDatabase } from "./database";
 
 export type AppUser = {
   id: string;
+  workspaceId: string;
   username: string;
   email: string;
   name: string;
@@ -147,7 +148,7 @@ function parseIntakeAttachments(value: string): IntakeAttachment[] {
 async function currentUser(identity: AuthIdentity): Promise<AppUser> {
   await ensureDatabase();
   const db = getDatabase();
-  const user = await db.prepare(`SELECT id, username, email, name, role, status
+  const user = await db.prepare(`SELECT id, username, email, name, role, status, workspace_id AS workspaceId
     FROM users WHERE id = ? AND status = 'active'`).bind(identity.userId).first<AppUser>();
   if (!user) throw new Error("Usuario no autorizado");
   await db.prepare("UPDATE users SET last_seen_at = ? WHERE id = ?").bind(Date.now(), user.id).run();
@@ -157,15 +158,15 @@ async function currentUser(identity: AuthIdentity): Promise<AppUser> {
 export async function loadWorkspace(identity: AuthIdentity): Promise<WorkspaceData> {
   const user = await currentUser(identity);
   const db = getDatabase();
-  const usersResult = await db.prepare(`SELECT id, username, email, name, role, status
-    FROM users WHERE status = 'active'
-    ORDER BY CASE role WHEN 'admin' THEN 0 ELSE 1 END, name`).all<AppUser>();
+  const usersResult = await db.prepare(`SELECT id, username, email, name, role, status, workspace_id AS workspaceId
+    FROM users WHERE status = 'active' AND workspace_id = ?
+    ORDER BY CASE role WHEN 'admin' THEN 0 ELSE 1 END, name`).bind(user.workspaceId).all<AppUser>();
   const consorciosResult = await db.prepare(`SELECT id, name, address, notes,
       created_at AS createdAt, updated_at AS updatedAt
-    FROM consorcios ORDER BY name COLLATE NOCASE`).all<ConsortiumItem>();
+    FROM consorcios WHERE workspace_id = ? ORDER BY name COLLATE NOCASE`).bind(user.workspaceId).all<ConsortiumItem>();
   const taskVisibilityClause = user.role === "admin"
-    ? ""
-    : "WHERE t.creator_id = ? OR t.assignee_id = ?";
+    ? "WHERE t.workspace_id = ?"
+    : "WHERE t.workspace_id = ? AND (t.creator_id = ? OR t.assignee_id = ?)";
   const tasksQuery = db.prepare(`SELECT
       t.id, t.title, t.description, t.building, t.priority, t.status, t.due_date,
       t.consortium_id, t.creator_id, creator.name AS creator_name, t.assignee_id,
@@ -177,8 +178,8 @@ export async function loadWorkspace(identity: AuthIdentity): Promise<WorkspaceDa
     ORDER BY CASE t.status WHEN 'pending' THEN 0 WHEN 'in_progress' THEN 1 WHEN 'review' THEN 2 ELSE 3 END,
       CASE WHEN t.due_date IS NULL THEN 1 ELSE 0 END, t.due_date, t.updated_at DESC`);
   const tasksResult = user.role === "admin"
-    ? await tasksQuery.all<TaskRow>()
-    : await tasksQuery.bind(user.id, user.id).all<TaskRow>();
+    ? await tasksQuery.bind(user.workspaceId).all<TaskRow>()
+    : await tasksQuery.bind(user.workspaceId, user.id, user.id).all<TaskRow>();
 
   const taskRows = tasksResult.results ?? [];
   const intakeResult = user.role === "admin"
@@ -190,8 +191,9 @@ export async function loadWorkspace(identity: AuthIdentity): Promise<WorkspaceDa
       FROM automatic_intake i
       LEFT JOIN consorcios c ON c.id = i.consortium_id
       LEFT JOIN users reviewer ON reviewer.id = i.reviewed_by_id
+      WHERE i.workspace_id = ?
       ORDER BY CASE i.status WHEN 'pending' THEN 0 WHEN 'error' THEN 1 WHEN 'accepted' THEN 2 ELSE 3 END,
-        i.received_at DESC LIMIT 100`).all<AutomaticIntakeRow>()
+        i.received_at DESC LIMIT 100`).bind(user.workspaceId).all<AutomaticIntakeRow>()
     : { results: [] as AutomaticIntakeRow[] };
   let comments: CommentRow[] = [];
   if (taskRows.length) {
@@ -205,7 +207,7 @@ export async function loadWorkspace(identity: AuthIdentity): Promise<WorkspaceDa
     comments = result.results ?? [];
   }
 
-  const daemonResult = user.role === "admin"
+  const daemonResult = user.role === "admin" && user.workspaceId === "main"
     ? await db.prepare(`SELECT id, name, host_name, version, status, started_at,
         last_heartbeat_at, last_error FROM daemon_instances ORDER BY last_heartbeat_at DESC`)
       .all<DaemonInstanceRow>()
@@ -343,7 +345,7 @@ export async function ingestAutomaticItem(input: {
   receivedAt?: number;
   isTest?: boolean;
   followUpSignal?: string;
-}) {
+}, workspaceId = "main") {
   await ensureDatabase();
   const source = input.source === "whatsapp" ? "whatsapp" : input.source === "email" ? "email" : null;
   if (!source) throw new Error("El origen debe ser email o whatsapp");
@@ -362,26 +364,27 @@ export async function ingestAutomaticItem(input: {
   const db = getDatabase();
 
   const existing = await db.prepare(`SELECT id, status, task_id FROM automatic_intake
-    WHERE source = ? AND source_account = ? AND external_id = ?`)
-    .bind(source, sourceAccount, externalId)
+    WHERE workspace_id = ? AND source = ? AND source_account = ? AND external_id = ?`)
+    .bind(workspaceId, source, sourceAccount, externalId)
     .first<{ id: string; status: AutomaticIntakeItem["status"]; task_id: string | null }>();
   if (existing) {
     return { ok: true, accepted: true, duplicate: true, intakeId: existing.id, taskId: existing.task_id, status: existing.status };
   }
 
   const admin = await db.prepare(`SELECT id FROM users
-    WHERE role = 'admin' AND status = 'active' ORDER BY created_at LIMIT 1`).first<{ id: string }>();
+    WHERE role = 'admin' AND status = 'active' AND workspace_id = ? ORDER BY created_at LIMIT 1`)
+    .bind(workspaceId).first<{ id: string }>();
   if (!admin) throw new Error("No hay un administrador activo para recibir el ingreso");
 
   let consortium: { id: string; name: string } | null = null;
   if (input.consortiumId) {
-    consortium = await db.prepare("SELECT id, name FROM consorcios WHERE id = ?")
-      .bind(String(input.consortiumId)).first<{ id: string; name: string }>();
+    consortium = await db.prepare("SELECT id, name FROM consorcios WHERE id = ? AND workspace_id = ?")
+      .bind(String(input.consortiumId), workspaceId).first<{ id: string; name: string }>();
     if (!consortium) throw new Error("El consorcio indicado no existe");
   } else {
     const searchable = normalizedText(`${title} ${body}`);
-    const consortia = await db.prepare("SELECT id, name, address FROM consorcios ORDER BY length(name) DESC")
-      .all<{ id: string; name: string; address: string }>();
+    const consortia = await db.prepare("SELECT id, name, address FROM consorcios WHERE workspace_id = ? ORDER BY length(name) DESC")
+      .bind(workspaceId).all<{ id: string; name: string; address: string }>();
     const match = (consortia.results ?? []).find((item) => {
       const name = normalizedText(item.name);
       const address = normalizedText(item.address);
@@ -409,10 +412,11 @@ export async function ingestAutomaticItem(input: {
   const linked = conversationId
     ? await db.prepare(`SELECT i.task_id, t.status AS task_status, t.consortium_id
         FROM automatic_intake i JOIN tasks t ON t.id = i.task_id
-        WHERE i.source = ? AND i.source_account = ? AND i.conversation_id = ?
+        WHERE i.workspace_id = ? AND t.workspace_id = i.workspace_id
+          AND i.source = ? AND i.source_account = ? AND i.conversation_id = ?
           AND i.task_id IS NOT NULL
         ORDER BY i.received_at DESC, i.created_at DESC LIMIT 1`)
-      .bind(source, sourceAccount, conversationId)
+      .bind(workspaceId, source, sourceAccount, conversationId)
       .first<{ task_id: string; task_status: TaskItem["status"]; consortium_id: string | null }>()
     : null;
   const followUpSignal = ["resolved", "recurrence", "unknown"].includes(String(input.followUpSignal))
@@ -426,11 +430,11 @@ export async function ingestAutomaticItem(input: {
       db.prepare(`INSERT INTO automatic_intake
         (id, source, source_account, external_id, conversation_id, sender_name, sender_address,
          title, body, kind, priority, status, consortium_id, task_id, attachments, is_test,
-         error_detail, received_at, reviewed_by_id, reviewed_at, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'accepted', ?, ?, ?, ?, '', ?, ?, ?, ?, ?)`).bind(
+         error_detail, received_at, reviewed_by_id, reviewed_at, created_at, updated_at, workspace_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'accepted', ?, ?, ?, ?, '', ?, ?, ?, ?, ?, ?)`).bind(
           intakeId, source, sourceAccount, externalId, conversationId, senderName, senderAddress,
           title, body, kind, priority, consortium?.id ?? linked.consortium_id, taskId,
-          JSON.stringify(attachments), input.isTest ? 1 : 0, receivedAt, admin.id, now, now, now,
+          JSON.stringify(attachments), input.isTest || workspaceId === "test" ? 1 : 0, receivedAt, admin.id, now, now, now, workspaceId,
         ),
     ];
     let action: "commented" | "reopened" | "ignored_resolved" = "commented";
@@ -460,8 +464,8 @@ export async function ingestAutomaticItem(input: {
       await db.batch(statements);
     } catch (error) {
       const raced = await db.prepare(`SELECT id, status, task_id FROM automatic_intake
-        WHERE source = ? AND source_account = ? AND external_id = ?`)
-        .bind(source, sourceAccount, externalId)
+        WHERE workspace_id = ? AND source = ? AND source_account = ? AND external_id = ?`)
+        .bind(workspaceId, source, sourceAccount, externalId)
         .first<{ id: string; status: AutomaticIntakeItem["status"]; task_id: string | null }>();
       if (raced) return { ok: true, accepted: true, duplicate: true, intakeId: raced.id, taskId: raced.task_id, status: raced.status };
       throw error;
@@ -472,25 +476,25 @@ export async function ingestAutomaticItem(input: {
   try {
     await db.batch([
       db.prepare(`INSERT INTO tasks
-        (id, title, description, building, priority, status, due_date, consortium_id, creator_id, assignee_id, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, 'review', NULL, ?, ?, ?, ?, ?)`).bind(
+        (id, title, description, building, priority, status, due_date, consortium_id, creator_id, assignee_id, created_at, updated_at, workspace_id)
+        VALUES (?, ?, ?, ?, ?, 'review', NULL, ?, ?, ?, ?, ?, ?)`).bind(
           taskId, title, taskDescription, consortium?.name ?? "", priority,
-          consortium?.id ?? null, admin.id, admin.id, receivedAt, now,
+          consortium?.id ?? null, admin.id, admin.id, receivedAt, now, workspaceId,
         ),
       db.prepare(`INSERT INTO automatic_intake
         (id, source, source_account, external_id, conversation_id, sender_name, sender_address,
          title, body, kind, priority, status, consortium_id, task_id, attachments, is_test,
-         error_detail, received_at, reviewed_by_id, reviewed_at, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, '', ?, NULL, NULL, ?, ?)`).bind(
+         error_detail, received_at, reviewed_by_id, reviewed_at, created_at, updated_at, workspace_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, '', ?, NULL, NULL, ?, ?, ?)`).bind(
           intakeId, source, sourceAccount, externalId, conversationId, senderName, senderAddress,
           title, body, kind, priority, consortium?.id ?? null, taskId, JSON.stringify(attachments),
-          input.isTest ? 1 : 0, receivedAt, now, now,
+          input.isTest || workspaceId === "test" ? 1 : 0, receivedAt, now, now, workspaceId,
         ),
     ]);
   } catch (error) {
     const raced = await db.prepare(`SELECT id, status, task_id FROM automatic_intake
-      WHERE source = ? AND source_account = ? AND external_id = ?`)
-      .bind(source, sourceAccount, externalId)
+      WHERE workspace_id = ? AND source = ? AND source_account = ? AND external_id = ?`)
+      .bind(workspaceId, source, sourceAccount, externalId)
       .first<{ id: string; status: AutomaticIntakeItem["status"]; task_id: string | null }>();
     if (raced) return { ok: true, accepted: true, duplicate: true, intakeId: raced.id, taskId: raced.task_id, status: raced.status };
     throw error;
@@ -506,7 +510,7 @@ export async function createAutomaticIntakeTest(identity: AuthIdentity, input: {
   source?: string; sourceAccount?: string; senderName?: string; senderAddress?: string;
   title?: string; body?: string; consortiumId?: string | null;
 }) {
-  await requireAdmin(identity);
+  const user = await requireAdmin(identity);
   await ingestAutomaticItem({
     ...input,
     externalId: `test:${crypto.randomUUID()}`,
@@ -514,7 +518,7 @@ export async function createAutomaticIntakeTest(identity: AuthIdentity, input: {
     sourceAccount: input.sourceAccount || (input.source === "email" ? "Correo de prueba" : "WhatsApp Línea 1"),
     isTest: true,
     receivedAt: Date.now(),
-  });
+  }, user.workspaceId);
   return loadWorkspace(identity);
 }
 
@@ -593,8 +597,8 @@ export async function reviewAutomaticIntake(identity: AuthIdentity, intakeId: st
   const action = String(actionValue ?? "");
   if (!['accept', 'discard'].includes(action)) throw new Error("Acción de revisión desconocida");
   const db = getDatabase();
-  const item = await db.prepare("SELECT id, status, task_id FROM automatic_intake WHERE id = ?")
-    .bind(intakeId).first<{ id: string; status: AutomaticIntakeItem["status"]; task_id: string | null }>();
+  const item = await db.prepare("SELECT id, status, task_id FROM automatic_intake WHERE id = ? AND workspace_id = ?")
+    .bind(intakeId, user.workspaceId).first<{ id: string; status: AutomaticIntakeItem["status"]; task_id: string | null }>();
   if (!item) throw new Error("El ingreso no existe");
   if (item.status !== "pending" && item.status !== "error") return loadWorkspace(identity);
   const now = Date.now();
@@ -635,21 +639,21 @@ export async function createTask(identity: AuthIdentity, input: {
   const db = getDatabase();
   let building = "";
   if (input.consortiumId) {
-    const consortium = await db.prepare("SELECT name FROM consorcios WHERE id = ?")
-      .bind(input.consortiumId).first<{ name: string }>();
+    const consortium = await db.prepare("SELECT name FROM consorcios WHERE id = ? AND workspace_id = ?")
+      .bind(input.consortiumId, user.workspaceId).first<{ name: string }>();
     if (!consortium) throw new Error("El consorcio seleccionado no existe");
     building = consortium.name;
   }
   if (input.assigneeId) {
-    const assignee = await db.prepare("SELECT id FROM users WHERE id = ? AND status = 'active'").bind(input.assigneeId).first();
+    const assignee = await db.prepare("SELECT id FROM users WHERE id = ? AND status = 'active' AND workspace_id = ?").bind(input.assigneeId, user.workspaceId).first();
     if (!assignee) throw new Error("La persona asignada no existe");
   }
   const now = Date.now();
   await db.prepare(`INSERT INTO tasks
-    (id, title, description, building, priority, status, due_date, consortium_id, creator_id, assignee_id, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+    (id, title, description, building, priority, status, due_date, consortium_id, creator_id, assignee_id, created_at, updated_at, workspace_id)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
     .bind(crypto.randomUUID(), title, input.description?.trim() ?? "", building,
-      priority, status, input.dueDate || null, input.consortiumId || null, user.id, input.assigneeId || null, now, now).run();
+      priority, status, input.dueDate || null, input.consortiumId || null, user.id, input.assigneeId || null, now, now, user.workspaceId).run();
   return loadWorkspace(identity);
 }
 
@@ -659,8 +663,8 @@ export async function updateTask(identity: AuthIdentity, taskId: string, input: 
 }) {
   const user = await currentUser(identity);
   const db = getDatabase();
-  const task = await db.prepare("SELECT creator_id, assignee_id FROM tasks WHERE id = ?")
-    .bind(taskId).first<{ creator_id: string; assignee_id: string | null }>();
+  const task = await db.prepare("SELECT creator_id, assignee_id FROM tasks WHERE id = ? AND workspace_id = ?")
+    .bind(taskId, user.workspaceId).first<{ creator_id: string; assignee_id: string | null }>();
   if (!task || (user.role !== "admin" && task.creator_id !== user.id && task.assignee_id !== user.id)) {
     throw new Error("Tarea no encontrada");
   }
@@ -676,8 +680,8 @@ export async function updateTask(identity: AuthIdentity, taskId: string, input: 
     if ("consortiumId" in input) {
       let building = "";
       if (input.consortiumId) {
-        const consortium = await db.prepare("SELECT name FROM consorcios WHERE id = ?")
-          .bind(input.consortiumId).first<{ name: string }>();
+        const consortium = await db.prepare("SELECT name FROM consorcios WHERE id = ? AND workspace_id = ?")
+          .bind(input.consortiumId, user.workspaceId).first<{ name: string }>();
         if (!consortium) throw new Error("El consorcio seleccionado no existe");
         building = consortium.name;
       }
@@ -688,15 +692,15 @@ export async function updateTask(identity: AuthIdentity, taskId: string, input: 
     if ("dueDate" in input) { fields.push("due_date = ?"); values.push(input.dueDate || null); }
     if ("assigneeId" in input) {
       if (input.assigneeId) {
-        const assignee = await db.prepare("SELECT id FROM users WHERE id = ? AND status = 'active'").bind(input.assigneeId).first();
+        const assignee = await db.prepare("SELECT id FROM users WHERE id = ? AND status = 'active' AND workspace_id = ?").bind(input.assigneeId, user.workspaceId).first();
         if (!assignee) throw new Error("La persona asignada no existe");
       }
       fields.push("assignee_id = ?"); values.push(input.assigneeId || null);
     }
   }
   if (!fields.length) return loadWorkspace(identity);
-  fields.push("updated_at = ?"); values.push(Date.now(), taskId);
-  await db.prepare(`UPDATE tasks SET ${fields.join(", ")} WHERE id = ?`).bind(...values).run();
+  fields.push("updated_at = ?"); values.push(Date.now(), taskId, user.workspaceId);
+  await db.prepare(`UPDATE tasks SET ${fields.join(", ")} WHERE id = ? AND workspace_id = ?`).bind(...values).run();
   return loadWorkspace(identity);
 }
 
@@ -707,18 +711,18 @@ async function requireAdmin(identity: AuthIdentity) {
 }
 
 export async function resetOperationalData(identity: AuthIdentity) {
-  await requireAdmin(identity);
+  const user = await requireAdmin(identity);
   const db = getDatabase();
   const [taskCount, commentCount, intakeCount] = await Promise.all([
-    db.prepare("SELECT count(*) AS total FROM tasks").first<{ total: number }>(),
-    db.prepare("SELECT count(*) AS total FROM comments").first<{ total: number }>(),
-    db.prepare("SELECT count(*) AS total FROM automatic_intake").first<{ total: number }>(),
+    db.prepare("SELECT count(*) AS total FROM tasks WHERE workspace_id = ?").bind(user.workspaceId).first<{ total: number }>(),
+    db.prepare("SELECT count(*) AS total FROM comments WHERE task_id IN (SELECT id FROM tasks WHERE workspace_id = ?)").bind(user.workspaceId).first<{ total: number }>(),
+    db.prepare("SELECT count(*) AS total FROM automatic_intake WHERE workspace_id = ?").bind(user.workspaceId).first<{ total: number }>(),
   ]);
 
   await db.batch([
-    db.prepare("DELETE FROM automatic_intake"),
-    db.prepare("DELETE FROM comments"),
-    db.prepare("DELETE FROM tasks"),
+    db.prepare("DELETE FROM automatic_intake WHERE workspace_id = ?").bind(user.workspaceId),
+    db.prepare("DELETE FROM comments WHERE task_id IN (SELECT id FROM tasks WHERE workspace_id = ?)").bind(user.workspaceId),
+    db.prepare("DELETE FROM tasks WHERE workspace_id = ?").bind(user.workspaceId),
     db.prepare("PRAGMA optimize"),
   ]);
 
@@ -735,31 +739,31 @@ export async function resetOperationalData(identity: AuthIdentity) {
 export async function createConsortium(identity: AuthIdentity, input: {
   name?: string; address?: string; notes?: string;
 }) {
-  await requireAdmin(identity);
+  const user = await requireAdmin(identity);
   const name = input.name?.trim();
   if (!name) throw new Error("El nombre del consorcio es obligatorio");
   const db = getDatabase();
-  const duplicate = await db.prepare("SELECT id FROM consorcios WHERE name = ? COLLATE NOCASE")
-    .bind(name).first();
+  const duplicate = await db.prepare("SELECT id FROM consorcios WHERE name = ? COLLATE NOCASE AND workspace_id = ?")
+    .bind(name, user.workspaceId).first();
   if (duplicate) throw new Error("Ya existe un consorcio con ese nombre");
   const now = Date.now();
-  await db.prepare(`INSERT INTO consorcios (id, name, address, notes, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?)`)
-    .bind(crypto.randomUUID(), name, input.address?.trim() ?? "", input.notes?.trim() ?? "", now, now).run();
+  await db.prepare(`INSERT INTO consorcios (id, name, address, notes, created_at, updated_at, workspace_id)
+    VALUES (?, ?, ?, ?, ?, ?, ?)`)
+    .bind(crypto.randomUUID(), name, input.address?.trim() ?? "", input.notes?.trim() ?? "", now, now, user.workspaceId).run();
   return loadWorkspace(identity);
 }
 
 export async function updateConsortium(identity: AuthIdentity, consortiumId: string, input: {
   name?: string; address?: string; notes?: string;
 }) {
-  await requireAdmin(identity);
+  const user = await requireAdmin(identity);
   const name = input.name?.trim();
   if (!name) throw new Error("El nombre del consorcio es obligatorio");
   const db = getDatabase();
-  const current = await db.prepare("SELECT id FROM consorcios WHERE id = ?").bind(consortiumId).first();
+  const current = await db.prepare("SELECT id FROM consorcios WHERE id = ? AND workspace_id = ?").bind(consortiumId, user.workspaceId).first();
   if (!current) throw new Error("Consorcio no encontrado");
-  const duplicate = await db.prepare("SELECT id FROM consorcios WHERE name = ? COLLATE NOCASE AND id <> ?")
-    .bind(name, consortiumId).first();
+  const duplicate = await db.prepare("SELECT id FROM consorcios WHERE name = ? COLLATE NOCASE AND id <> ? AND workspace_id = ?")
+    .bind(name, consortiumId, user.workspaceId).first();
   if (duplicate) throw new Error("Ya existe un consorcio con ese nombre");
   const now = Date.now();
   await db.batch([
@@ -772,9 +776,9 @@ export async function updateConsortium(identity: AuthIdentity, consortiumId: str
 }
 
 export async function deleteConsortium(identity: AuthIdentity, consortiumId: string) {
-  await requireAdmin(identity);
+  const user = await requireAdmin(identity);
   const db = getDatabase();
-  const consortium = await db.prepare("SELECT id FROM consorcios WHERE id = ?").bind(consortiumId).first();
+  const consortium = await db.prepare("SELECT id FROM consorcios WHERE id = ? AND workspace_id = ?").bind(consortiumId, user.workspaceId).first();
   if (!consortium) throw new Error("Consorcio no encontrado");
   await db.batch([
     db.prepare("UPDATE tasks SET consortium_id = NULL WHERE consortium_id = ?").bind(consortiumId),
@@ -786,8 +790,8 @@ export async function deleteConsortium(identity: AuthIdentity, consortiumId: str
 export async function deleteTask(identity: AuthIdentity, taskId: string) {
   const user = await currentUser(identity);
   const db = getDatabase();
-  const task = await db.prepare("SELECT creator_id FROM tasks WHERE id = ?")
-    .bind(taskId).first<{ creator_id: string }>();
+  const task = await db.prepare("SELECT creator_id FROM tasks WHERE id = ? AND workspace_id = ?")
+    .bind(taskId, user.workspaceId).first<{ creator_id: string }>();
   if (!task || (task.creator_id !== user.id && user.role !== "admin")) {
     throw new Error("No tenés permiso para eliminar esta tarea");
   }
@@ -801,8 +805,8 @@ export async function addComment(identity: AuthIdentity, taskId: string, bodyVal
   const body = bodyValue.trim();
   if (!body) throw new Error("Escribí un comentario");
   const db = getDatabase();
-  const task = await db.prepare("SELECT creator_id, assignee_id FROM tasks WHERE id = ?")
-    .bind(taskId).first<{ creator_id: string; assignee_id: string | null }>();
+  const task = await db.prepare("SELECT creator_id, assignee_id FROM tasks WHERE id = ? AND workspace_id = ?")
+    .bind(taskId, user.workspaceId).first<{ creator_id: string; assignee_id: string | null }>();
   if (!task || (user.role !== "admin" && task.creator_id !== user.id && task.assignee_id !== user.id)) {
     throw new Error("Tarea no encontrada");
   }

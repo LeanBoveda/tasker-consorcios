@@ -20,7 +20,7 @@ test("exposes a protected and idempotent automatic intake endpoint", async () =>
   assert.match(route, /status:\s*401/);
   assert.match(auth, /x-tasker-intake-key/i);
   assert.match(auth, /TASKER_INTAKE_KEY/);
-  assert.match(schema, /automatic_intake_source_external_unique/);
+  assert.match(schema, /automatic_intake_workspace_external_unique/);
   assert.match(schema, /table\.source, table\.sourceAccount, table\.externalId/);
 });
 
