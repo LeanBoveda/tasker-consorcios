@@ -95,3 +95,18 @@ test("links incoming replies and reopens a completed recurring task", async () =
   assert.match(store, /created_after_closed_task/);
   assert.match(store, /INSERT INTO comments/);
 });
+
+test("offers complete task editing to creators and administrators", async () => {
+  const [app, store] = await Promise.all([source("app/TaskApp.tsx"), source("db/task-store.ts")]);
+
+  assert.match(app, /Editar tarea/);
+  assert.match(app, /Actualizar todos los datos/);
+  for (const field of ["Título", "Descripción", "Estado", "Prioridad", "Consorcio", "Asignada a", "Fecha límite"]) {
+    assert.match(app, new RegExp(`>${field}<`));
+  }
+  assert.match(app, /creatorId === data\.currentUser\.id \|\| isAdmin/);
+  assert.match(app, /Guardar cambios/);
+  assert.match(store, /validatedDueDate/);
+  assert.match(store, /El título es demasiado largo/);
+  assert.match(store, /La descripción es demasiado larga/);
+});

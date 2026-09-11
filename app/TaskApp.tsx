@@ -14,6 +14,15 @@ const columns: Array<{ key: TaskItem["status"]; label: string; tone: string }> =
 const priorityLabels = { low: "Baja", medium: "Media", high: "Alta" };
 const intakeKindLabels = { claim: "Reclamo", request: "Solicitud", order: "Pedido", notice: "Aviso", other: "Otro" };
 const intakeStatusLabels = { pending: "Por revisar", accepted: "Confirmado", discarded: "Descartado", error: "Con error" };
+type TaskEditDraft = {
+  title: string;
+  description: string;
+  status: TaskItem["status"];
+  priority: TaskItem["priority"];
+  consortiumId: string;
+  assigneeId: string;
+  dueDate: string;
+};
 
 function initials(name: string) {
   return name.split(" ").filter(Boolean).slice(0, 2).map((part) => part[0]).join("").toUpperCase();
@@ -52,6 +61,7 @@ export default function TaskApp({ initialData }: { initialData: WorkspaceData })
   const [newTaskOpen, setNewTaskOpen] = useState(false);
   const [newTaskStatus, setNewTaskStatus] = useState<TaskItem["status"]>("pending");
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
+  const [taskEditDraft, setTaskEditDraft] = useState<TaskEditDraft | null>(null);
   const [draggedTaskId, setDraggedTaskId] = useState<string | null>(null);
   const [dropTargetStatus, setDropTargetStatus] = useState<TaskItem["status"] | null>(null);
   const [trashDropActive, setTrashDropActive] = useState(false);
@@ -258,6 +268,31 @@ export default function TaskApp({ initialData }: { initialData: WorkspaceData })
   }
   async function updateSelected(input: Record<string, unknown>, success = "Tarea actualizada") {
     if (selectedTask) await mutate(`/api/tasks/${selectedTask.id}`, "PATCH", input, success);
+  }
+  function openTaskEditor(task: TaskItem) {
+    setTaskEditDraft({
+      title: task.title,
+      description: task.description,
+      status: task.status,
+      priority: task.priority,
+      consortiumId: task.consortiumId ?? "",
+      assigneeId: task.assigneeId ?? "",
+      dueDate: task.dueDate ?? "",
+    });
+  }
+  async function submitTaskEdit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!selectedTask || !taskEditDraft) return;
+    const ok = await mutate(`/api/tasks/${selectedTask.id}`, "PATCH", {
+      title: taskEditDraft.title,
+      description: taskEditDraft.description,
+      status: taskEditDraft.status,
+      priority: taskEditDraft.priority,
+      consortiumId: taskEditDraft.consortiumId || null,
+      assigneeId: taskEditDraft.assigneeId || null,
+      dueDate: taskEditDraft.dueDate || null,
+    }, "Tarea actualizada");
+    if (ok) setTaskEditDraft(null);
   }
   async function deleteSelected() {
     if (!selectedTask) return;
@@ -530,8 +565,8 @@ export default function TaskApp({ initialData }: { initialData: WorkspaceData })
           <section className="modal" role="dialog" aria-modal="true" aria-labelledby="new-task-title" onMouseDown={(event) => event.stopPropagation()}>
             <div className="modal-header"><div><span className="modal-kicker">NUEVA TAREA</span><h2 id="new-task-title">¿Qué hay que resolver?</h2></div><button className="close-button" onClick={() => setNewTaskOpen(false)} aria-label="Cerrar">×</button></div>
             <form onSubmit={submitTask}>
-              <label>Título<input name="title" required autoFocus placeholder="Ej. Coordinar visita del ascensorista" /></label>
-              <label>Descripción<textarea name="description" rows={3} placeholder="Agregá contexto, datos del proveedor o próximos pasos…" /></label>
+              <label>Título<input name="title" required autoFocus maxLength={500} placeholder="Ej. Coordinar visita del ascensorista" /></label>
+              <label>Descripción<textarea name="description" rows={3} maxLength={20000} placeholder="Agregá contexto, datos del proveedor o próximos pasos…" /></label>
               <div className="form-grid">
                 <label>Consorcio<select name="consortiumId" defaultValue=""><option value="">Sin consorcio</option>{data.consorcios.map((item) => <option value={item.id} key={item.id}>{item.name}{item.address ? ` · ${item.address}` : ""}</option>)}</select></label><label>Fecha límite<input name="dueDate" type="date" /></label>
                 <label>Prioridad<select name="priority" defaultValue="medium"><option value="low">Baja</option><option value="medium">Media</option><option value="high">Alta</option></select></label>
@@ -545,9 +580,9 @@ export default function TaskApp({ initialData }: { initialData: WorkspaceData })
       )}
 
       {selectedTask && (
-        <div className="drawer-backdrop" onMouseDown={() => setSelectedTaskId(null)}>
+        <div className="drawer-backdrop" onMouseDown={() => { setSelectedTaskId(null); setTaskEditDraft(null); }}>
           <aside className="task-drawer" role="dialog" aria-modal="true" aria-labelledby="task-detail-title" onMouseDown={(event) => event.stopPropagation()}>
-            <div className="drawer-top"><span className={`visibility-pill ${selectedTask.assigneeId ? "shared" : ""}`}>{selectedTask.assigneeId ? "Compartida" : "Privada"}</span><button className="close-button" onClick={() => setSelectedTaskId(null)} aria-label="Cerrar">×</button></div>
+            <div className="drawer-top"><span className={`visibility-pill ${selectedTask.assigneeId ? "shared" : ""}`}>{selectedTask.assigneeId ? "Compartida" : "Privada"}</span><div className="drawer-actions">{(selectedTask.creatorId === data.currentUser.id || isAdmin) && <button className="row-button" onClick={() => openTaskEditor(selectedTask)}>Editar tarea</button>}<button className="close-button" onClick={() => { setSelectedTaskId(null); setTaskEditDraft(null); }} aria-label="Cerrar">×</button></div></div>
             <h2 id="task-detail-title">{selectedTask.title}</h2><p className="drawer-description">{selectedTask.description || "Sin descripción."}</p>
             <div className="detail-grid">
               <label>Estado<select value={selectedTask.status} disabled={saving} onChange={(event) => updateSelected({ status: event.target.value }, "Estado actualizado")}>{columns.map((column) => <option value={column.key} key={column.key}>{column.label}</option>)}</select></label>
@@ -572,6 +607,27 @@ export default function TaskApp({ initialData }: { initialData: WorkspaceData })
               </div>
             )}
           </aside>
+        </div>
+      )}
+
+      {selectedTask && taskEditDraft && (
+        <div className="modal-backdrop elevated" onMouseDown={() => setTaskEditDraft(null)}>
+          <section className="modal task-edit-modal" role="dialog" aria-modal="true" aria-labelledby="edit-task-title" onMouseDown={(event) => event.stopPropagation()}>
+            <div className="modal-header"><div><span className="modal-kicker">EDITAR TAREA</span><h2 id="edit-task-title">Actualizar todos los datos</h2></div><button className="close-button" onClick={() => setTaskEditDraft(null)} aria-label="Cerrar">×</button></div>
+            <form onSubmit={submitTaskEdit}>
+              <label>Título<input required autoFocus maxLength={500} value={taskEditDraft.title} onChange={(event) => setTaskEditDraft({ ...taskEditDraft, title: event.target.value })} /></label>
+              <label>Descripción<textarea rows={5} maxLength={20000} value={taskEditDraft.description} onChange={(event) => setTaskEditDraft({ ...taskEditDraft, description: event.target.value })} placeholder="Contexto, datos del proveedor o próximos pasos…" /></label>
+              <div className="form-grid">
+                <label>Estado<select value={taskEditDraft.status} onChange={(event) => setTaskEditDraft({ ...taskEditDraft, status: event.target.value as TaskItem["status"] })}>{columns.map((column) => <option value={column.key} key={column.key}>{column.label}</option>)}</select></label>
+                <label>Prioridad<select value={taskEditDraft.priority} onChange={(event) => setTaskEditDraft({ ...taskEditDraft, priority: event.target.value as TaskItem["priority"] })}><option value="low">Baja</option><option value="medium">Media</option><option value="high">Alta</option></select></label>
+                <label>Consorcio<select value={taskEditDraft.consortiumId} onChange={(event) => setTaskEditDraft({ ...taskEditDraft, consortiumId: event.target.value })}><option value="">Sin consorcio</option>{data.consorcios.map((item) => <option value={item.id} key={item.id}>{item.name}{item.address ? ` · ${item.address}` : ""}</option>)}</select></label>
+                <label>Asignada a<select value={taskEditDraft.assigneeId} onChange={(event) => setTaskEditDraft({ ...taskEditDraft, assigneeId: event.target.value })}><option value="">Solo para mí</option>{data.users.map((user) => <option value={user.id} key={user.id}>{user.name}</option>)}</select></label>
+                <label>Fecha límite<input type="date" value={taskEditDraft.dueDate} onChange={(event) => setTaskEditDraft({ ...taskEditDraft, dueDate: event.target.value })} /></label>
+              </div>
+              <p className="task-edit-help">Los cambios se guardan juntos y quedan registrados en Actividad.</p>
+              <div className="modal-actions"><button type="button" className="secondary-button" onClick={() => setTaskEditDraft(null)}>Cancelar</button><button className="primary-button" disabled={saving}>{saving ? "Guardando…" : "Guardar cambios"}</button></div>
+            </form>
+          </section>
         </div>
       )}
 

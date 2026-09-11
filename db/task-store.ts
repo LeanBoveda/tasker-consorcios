@@ -651,6 +651,18 @@ function normalizedText(value: string) {
   return value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLocaleLowerCase("es").replace(/[^a-z0-9]+/g, " ").trim();
 }
 
+function validatedDueDate(value: unknown) {
+  const dueDate = String(value ?? "").trim();
+  if (!dueDate) return null;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dueDate)) throw new Error("La fecha límite no es válida");
+  const [year, month, day] = dueDate.split("-").map(Number);
+  const date = new Date(Date.UTC(year, month - 1, day));
+  if (date.getUTCFullYear() !== year || date.getUTCMonth() !== month - 1 || date.getUTCDate() !== day) {
+    throw new Error("La fecha límite no es válida");
+  }
+  return dueDate;
+}
+
 export async function createTask(identity: AuthIdentity, input: {
   title: string; description?: string; consortiumId?: string | null; priority?: string;
   status?: string; dueDate?: string | null; assigneeId?: string | null;
@@ -658,6 +670,10 @@ export async function createTask(identity: AuthIdentity, input: {
   const user = await currentUser(identity);
   const title = input.title?.trim();
   if (!title) throw new Error("El título es obligatorio");
+  if (title.length > 500) throw new Error("El título es demasiado largo");
+  const description = input.description?.trim() ?? "";
+  if (description.length > 20000) throw new Error("La descripción es demasiado larga");
+  const dueDate = validatedDueDate(input.dueDate);
   const priority = ["low", "medium", "high"].includes(input.priority ?? "") ? input.priority : "medium";
   const status = ["pending", "in_progress", "review", "done"].includes(input.status ?? "") ? input.status : "pending";
   const db = getDatabase();
@@ -678,10 +694,10 @@ export async function createTask(identity: AuthIdentity, input: {
   await db.batch([db.prepare(`INSERT INTO tasks
     (id, title, description, building, priority, status, due_date, consortium_id, creator_id, assignee_id, created_at, updated_at, workspace_id)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-    .bind(taskId, title, input.description?.trim() ?? "", building,
-      priority, status, input.dueDate || null, input.consortiumId || null, user.id, input.assigneeId || null, now, now, user.workspaceId),
+    .bind(taskId, title, description, building,
+      priority, status, dueDate, input.consortiumId || null, user.id, input.assigneeId || null, now, now, user.workspaceId),
     auditStatement(user, "task.created", "task", taskId, title, [`Estado: ${snapshot.status}`, `Prioridad: ${snapshot.priority}`,
-      `Asignada a: ${snapshot.assignee_id}`, `Consorcio: ${building || "Sin consorcio"}`, `Vencimiento: ${input.dueDate || "Sin fecha"}`]),
+      `Asignada a: ${snapshot.assignee_id}`, `Consorcio: ${building || "Sin consorcio"}`, `Vencimiento: ${dueDate || "Sin fecha"}`]),
   ]);
   return loadWorkspace(identity);
 }
@@ -704,8 +720,16 @@ export async function updateTask(identity: AuthIdentity, taskId: string, input: 
     fields.push("status = ?"); values.push(input.status);
   }
   if (task.creator_id === user.id || user.role === "admin") {
-    if (input.title?.trim()) { fields.push("title = ?"); values.push(input.title.trim()); }
-    if (typeof input.description === "string") { fields.push("description = ?"); values.push(input.description.trim()); }
+    if (input.title?.trim()) {
+      const title = input.title.trim();
+      if (title.length > 500) throw new Error("El título es demasiado largo");
+      fields.push("title = ?"); values.push(title);
+    }
+    if (typeof input.description === "string") {
+      const description = input.description.trim();
+      if (description.length > 20000) throw new Error("La descripción es demasiado larga");
+      fields.push("description = ?"); values.push(description);
+    }
     if ("consortiumId" in input) {
       let building = "";
       if (input.consortiumId) {
@@ -718,7 +742,7 @@ export async function updateTask(identity: AuthIdentity, taskId: string, input: 
       values.push(input.consortiumId || null, building);
     }
     if (input.priority && ["low", "medium", "high"].includes(input.priority)) { fields.push("priority = ?"); values.push(input.priority); }
-    if ("dueDate" in input) { fields.push("due_date = ?"); values.push(input.dueDate || null); }
+    if ("dueDate" in input) { fields.push("due_date = ?"); values.push(validatedDueDate(input.dueDate)); }
     if ("assigneeId" in input) {
       if (input.assigneeId) {
         const assignee = await db.prepare("SELECT id FROM users WHERE id = ? AND status = 'active' AND workspace_id = ?").bind(input.assigneeId, user.workspaceId).first();
