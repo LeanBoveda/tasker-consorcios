@@ -72,6 +72,22 @@ export const tasks = sqliteTable("tasks", {
   index("idx_tasks_consortium_id").on(table.consortiumId),
 ]);
 
+export const notifications = sqliteTable("notifications", {
+  id: text("id").primaryKey(),
+  workspaceId: text("workspace_id").notNull(),
+  userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  kind: text("kind", { enum: ["assignment", "comment", "status", "due", "intake"] }).notNull(),
+  taskId: text("task_id").references(() => tasks.id, { onDelete: "cascade" }),
+  title: text("title").notNull(),
+  message: text("message").notNull().default(""),
+  dedupeKey: text("dedupe_key"),
+  readAt: integer("read_at"),
+  createdAt: integer("created_at").notNull(),
+}, (table) => [
+  index("idx_notifications_user_read_created").on(table.workspaceId, table.userId, table.readAt, table.createdAt),
+  uniqueIndex("notifications_user_dedupe_unique").on(table.workspaceId, table.userId, table.dedupeKey),
+]);
+
 export const comments = sqliteTable("comments", {
   id: text("id").primaryKey(),
   taskId: text("task_id").notNull().references(() => tasks.id, { onDelete: "cascade" }),

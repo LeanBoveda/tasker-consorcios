@@ -278,6 +278,14 @@ test("login, logout and user changes record actions without credentials or token
   }
 });
 
+test("a burst of valid login requests creates only one activity record", async () => {
+  const sessions = [];
+  for (let index = 0; index < 8; index++) sessions.push(await auth.login("test", "test123"));
+  assert.equal(new Set(sessions.map((session) => session.token)).size, 8);
+  const logins = (await activity.listActivity(sandbox)).items.filter((item) => item.action === "session.login");
+  assert.equal(logins.length, 1);
+});
+
 test("consortia, simulations and intake reviews are logged; reset preserves all history", async () => {
   const cons = (await store.createConsortium(sandbox, { name: "Edificio test" })).consorcios[0];
   await store.updateConsortium(sandbox, cons.id, { name: "Edificio renombrado", address: "Calle 1", notes: "Solo prueba" });
@@ -307,6 +315,36 @@ test("daemon events are attributed to the system and retries do not duplicate au
   assert.equal(items.length, 2);
   assert.ok(items.every((item) => item.actorId === "system:daemon"));
   assert.ok(items.some((item) => item.action === "intake.follow_up"));
+});
+
+test("notifications are personal, deduplicated and isolated by workspace", async () => {
+  const created = await store.createTask(main, {
+    title: "Revisar vencimiento",
+    assigneeId: "main-member",
+    dueDate: "2020-01-01",
+  });
+  const taskId = created.tasks.find((task) => task.title === "Revisar vencimiento").id;
+  const memberIdentity = { userId: "main-member" };
+  const first = await store.loadWorkspace(memberIdentity);
+  assert.ok(first.notifications.some((item) => item.kind === "assignment" && item.taskId === taskId));
+  assert.ok(first.notifications.some((item) => item.kind === "due" && item.taskId === taskId));
+  const dueCount = first.notifications.filter((item) => item.kind === "due" && item.taskId === taskId).length;
+  const again = await store.loadWorkspace(memberIdentity);
+  assert.equal(again.notifications.filter((item) => item.kind === "due" && item.taskId === taskId).length, dueCount);
+
+  await store.addComment(memberIdentity, taskId, "Proveedor contactado");
+  await store.updateTask(memberIdentity, taskId, { status: "in_progress" });
+  const creator = await store.loadWorkspace(main);
+  assert.ok(creator.notifications.some((item) => item.kind === "comment" && item.taskId === taskId));
+  assert.ok(creator.notifications.some((item) => item.kind === "status" && item.taskId === taskId));
+  assert.equal((await store.loadWorkspace(sandbox)).notifications.length, 0);
+
+  const unread = creator.notifications.find((item) => item.readAt === null);
+  const oneRead = await store.markNotificationRead(main, unread.id);
+  assert.ok(oneRead.notifications.find((item) => item.id === unread.id).readAt);
+  const allRead = await store.markNotificationRead(main, "all");
+  assert.equal(allRead.notifications.filter((item) => item.readAt === null).length, 0);
+  assert.equal((await store.loadWorkspace(memberIdentity)).notifications.filter((item) => item.readAt === null).length, 2);
 });
 
 test("failed and unauthorized mutations never claim success; audit failure rolls back the mutation", async () => {

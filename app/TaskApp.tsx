@@ -1,6 +1,6 @@
 "use client";
 
-import { DragEvent, FormEvent, useMemo, useRef, useState } from "react";
+import { DragEvent, FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import type { TaskItem, WorkspaceData } from "@/db/task-store";
 import UserImport from "./UserImport";
 import ActivityLog from "./ActivityLog";
@@ -14,6 +14,7 @@ const columns: Array<{ key: TaskItem["status"]; label: string; tone: string }> =
 const priorityLabels = { low: "Baja", medium: "Media", high: "Alta" };
 const intakeKindLabels = { claim: "Reclamo", request: "Solicitud", order: "Pedido", notice: "Aviso", other: "Otro" };
 const intakeStatusLabels = { pending: "Por revisar", accepted: "Confirmado", discarded: "Descartado", error: "Con error" };
+const notificationIcons = { assignment: "♙", comment: "♧", status: "↻", due: "◷", intake: "⇥" };
 type TaskEditDraft = {
   title: string;
   description: string;
@@ -77,6 +78,8 @@ export default function TaskApp({ initialData }: { initialData: WorkspaceData })
   const [importOpen, setImportOpen] = useState(false);
   const [intakeTestOpen, setIntakeTestOpen] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [notificationSaving, setNotificationSaving] = useState(false);
+  const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
 
   const selectedTask = data.tasks.find((task) => task.id === selectedTaskId) ?? null;
@@ -89,6 +92,7 @@ export default function TaskApp({ initialData }: { initialData: WorkspaceData })
     task.status === "done" && task.updatedAt > Date.now() - 7 * 86400000
   );
   const pendingIntake = data.intakeItems.filter((item) => item.status === "pending" || item.status === "error");
+  const unreadNotifications = data.notifications.filter((item) => item.readAt === null);
   const isTaskView = view === "home" || view === "mine";
   const isAdmin = data.currentUser.role === "admin";
   const isTestWorkspace = data.currentUser.workspaceId === "test";
@@ -116,6 +120,29 @@ export default function TaskApp({ initialData }: { initialData: WorkspaceData })
     });
   }, [data, view, assigneeFilter, buildingFilter, search]);
 
+  useEffect(() => {
+    let active = true;
+    async function refreshWorkspace() {
+      if (document.visibilityState !== "visible") return;
+      try {
+        const response = await fetch("/api/workspace", { cache: "no-store" });
+        if (!response.ok) return;
+        const payload = await response.json() as WorkspaceData;
+        if (active) setData(payload);
+      } catch {
+        // La próxima actualización automática vuelve a intentarlo sin interrumpir el trabajo.
+      }
+    }
+    const timer = window.setInterval(() => void refreshWorkspace(), 45000);
+    const refreshOnFocus = () => void refreshWorkspace();
+    window.addEventListener("focus", refreshOnFocus);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+      window.removeEventListener("focus", refreshOnFocus);
+    };
+  }, []);
+
   async function mutate(url: string, method: "POST" | "PATCH" | "DELETE", body: unknown, success: string) {
     setSaving(true);
     setNotice(null);
@@ -136,6 +163,31 @@ export default function TaskApp({ initialData }: { initialData: WorkspaceData })
       return false;
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function updateNotifications(url: string) {
+    setNotificationSaving(true);
+    try {
+      const response = await fetch(url, { method: "PATCH" });
+      const payload = await response.json() as WorkspaceData & { error?: string };
+      if (!response.ok) throw new Error(payload.error ?? "No se pudieron actualizar las notificaciones");
+      setData(payload);
+      return true;
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "No se pudieron actualizar las notificaciones");
+      return false;
+    } finally {
+      setNotificationSaving(false);
+    }
+  }
+
+  async function openNotification(item: WorkspaceData["notifications"][number]) {
+    if (item.readAt === null) await updateNotifications(`/api/notifications/${item.id}`);
+    setNotificationsOpen(false);
+    if (item.taskId && data.tasks.some((task) => task.id === item.taskId)) {
+      setView("home");
+      setSelectedTaskId(item.taskId);
     }
   }
 
@@ -380,7 +432,7 @@ export default function TaskApp({ initialData }: { initialData: WorkspaceData })
           <div className="topbar-actions">
             {isTaskView && searchOpen && <input className="search-input" autoFocus value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar tarea o consorcio…" aria-label="Buscar" />}
             {isTaskView && <button className="icon-button" aria-label="Buscar" onClick={() => setSearchOpen((value) => !value)}>⌕</button>}
-            <button className="icon-button notification" aria-label="Notificaciones" onClick={() => setNotice("No tenés notificaciones pendientes.")}>♢</button>
+            <button className={`icon-button notification ${unreadNotifications.length ? "has-unread" : ""}`} aria-label={`${unreadNotifications.length} notificaciones sin leer`} aria-expanded={notificationsOpen} onClick={() => setNotificationsOpen((value) => !value)}><span aria-hidden="true">♢</span>{unreadNotifications.length > 0 && <span className="notification-count">{unreadNotifications.length > 99 ? "99+" : unreadNotifications.length}</span>}</button>
             {view === "intake" && data.currentUser.role === "admin"
               ? <button className="primary-button" onClick={() => setIntakeTestOpen(true)}><span aria-hidden="true">＋</span> Simular ingreso</button>
               : view === "daemon"
@@ -388,6 +440,28 @@ export default function TaskApp({ initialData }: { initialData: WorkspaceData })
                 : isTaskView ? <button className="primary-button" onClick={() => openNewTask()}><span aria-hidden="true">＋</span> Nueva tarea</button> : null}
           </div>
         </header>
+
+        {notificationsOpen && (
+          <div className="notification-layer" onMouseDown={() => setNotificationsOpen(false)}>
+            <section className="notification-panel" role="dialog" aria-modal="true" aria-labelledby="notifications-title" onMouseDown={(event) => event.stopPropagation()}>
+              <div className="notification-panel-head">
+                <div><span className="modal-kicker">AVISOS</span><h2 id="notifications-title">Notificaciones</h2><p>{unreadNotifications.length ? `${unreadNotifications.length} sin leer` : "Todo al día"}</p></div>
+                <div>{unreadNotifications.length > 0 && <button className="row-button" disabled={notificationSaving} onClick={() => void updateNotifications("/api/notifications")}>Marcar todas como leídas</button>}<button className="close-button" onClick={() => setNotificationsOpen(false)} aria-label="Cerrar">×</button></div>
+              </div>
+              <div className="notification-list">
+                {data.notifications.map((item) => (
+                  <button className={`notification-item ${item.readAt === null ? "unread" : ""}`} key={item.id} disabled={notificationSaving} onClick={() => void openNotification(item)}>
+                    <span className={`notification-kind ${item.kind}`} aria-hidden="true">{notificationIcons[item.kind]}</span>
+                    <span className="notification-copy"><strong>{item.title}</strong><span>{item.message}</span><time>{dateTimeLabel(item.createdAt)}</time></span>
+                    {item.readAt === null && <span className="unread-dot" aria-label="Sin leer" />}
+                  </button>
+                ))}
+                {data.notifications.length === 0 && <div className="notification-empty"><span aria-hidden="true">✓</span><strong>No hay avisos pendientes</strong><p>Acá aparecerán asignaciones, comentarios, vencimientos e ingresos nuevos.</p></div>}
+              </div>
+              <p className="notification-refresh-note">Tasker revisa nuevos avisos automáticamente mientras la página está abierta.</p>
+            </section>
+          </div>
+        )}
 
         {isTaskView ? <>
         <div className="summary-row">

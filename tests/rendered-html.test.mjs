@@ -110,3 +110,38 @@ test("offers complete task editing to creators and administrators", async () => 
   assert.match(store, /El título es demasiado largo/);
   assert.match(store, /La descripción es demasiado larga/);
 });
+
+test("provides persistent personal notifications with direct task access", async () => {
+  const [app, store, schema, route] = await Promise.all([
+    source("app/TaskApp.tsx"),
+    source("db/task-store.ts"),
+    source("db/schema.ts"),
+    source("app/api/notifications/[id]/route.ts"),
+  ]);
+
+  assert.match(app, /Marcar todas como leídas/);
+  assert.match(app, /Tasker revisa nuevos avisos automáticamente/);
+  assert.match(app, /setSelectedTaskId\(item\.taskId\)/);
+  assert.match(store, /ensureDueNotifications/);
+  assert.match(store, /kind: "assignment"/);
+  assert.match(store, /kind: "comment"/);
+  assert.match(store, /kind: "status"/);
+  assert.match(store, /kind: "intake"/);
+  assert.match(schema, /export const notifications/);
+  assert.match(schema, /notifications_user_dedupe_unique/);
+  assert.match(route, /markNotificationRead/);
+});
+
+test("prevents repeated login submissions and duplicate access records", async () => {
+  const [form, auth] = await Promise.all([
+    source("app/login/LoginForm.tsx"),
+    source("db/auth-store.ts"),
+  ]);
+
+  assert.match(form, /const submitting = useRef\(false\)/);
+  assert.match(form, /if \(submitting\.current\) return/);
+  assert.match(form, /disabled=\{loading\}/);
+  assert.doesNotMatch(form, /router\.refresh\(\)/);
+  assert.match(auth, /LOGIN_AUDIT_DEDUPE_MS/);
+  assert.match(auth, /WHERE NOT EXISTS/);
+});

@@ -7,6 +7,7 @@ const BOOTSTRAP_SALT = "a5ce7dd3e178939670cfabadb77ce002";
 const BOOTSTRAP_HASH = "5d7607f8cf4b631c8f49e37fbe77e0bee69f001ee5d3d77c3f46db423757b1ef";
 const PASSWORD_ITERATIONS = 100000;
 const SESSION_DURATION_MS = 30 * 24 * 60 * 60 * 1000;
+const LOGIN_AUDIT_DEDUPE_MS = 30 * 1000;
 export const SESSION_COOKIE_NAME = "tasker_session";
 
 export type SessionIdentity = {
@@ -69,6 +70,17 @@ function equalHex(left: string, right: string) {
     difference |= left.charCodeAt(index) ^ right.charCodeAt(index);
   }
   return difference === 0;
+}
+
+function loginAuditStatement(user: LoginRow, now: number) {
+  return getDatabase().prepare(`INSERT INTO activity_log
+    (id, workspace_id, actor_id, actor_name, actor_username, action, entity_type, entity_id, entity_label, details, created_at)
+    SELECT ?, ?, ?, ?, ?, 'session.login', 'session', NULL, 'Inicio de sesión', '[]', ?
+    WHERE NOT EXISTS (
+      SELECT 1 FROM activity_log
+      WHERE workspace_id = ? AND actor_id = ? AND action = 'session.login' AND created_at >= ?
+    )`).bind(crypto.randomUUID(), user.workspaceId, user.id, user.name, user.username || "", now,
+      user.workspaceId, user.id, now - LOGIN_AUDIT_DEDUPE_MS);
 }
 
 export async function ensureBootstrapAdmin() {
@@ -136,7 +148,7 @@ export async function login(usernameValue: string, password: string) {
     getDatabase().prepare("INSERT INTO sessions (id, user_id, created_at, expires_at) VALUES (?, ?, ?, ?)")
       .bind(tokenHash, user.id, now, now + SESSION_DURATION_MS),
     getDatabase().prepare("UPDATE users SET last_seen_at = ? WHERE id = ?").bind(now, user.id),
-    auditStatement(user, "session.login", "session", null, "Inicio de sesión"),
+    loginAuditStatement(user, now),
   ]);
   return { token, expiresAt: now + SESSION_DURATION_MS };
 }

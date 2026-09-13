@@ -52,6 +52,15 @@ export type TaskItem = {
   updatedAt: number;
   comments: TaskComment[];
 };
+export type NotificationItem = {
+  id: string;
+  kind: "assignment" | "comment" | "status" | "due" | "intake";
+  taskId: string | null;
+  title: string;
+  message: string;
+  readAt: number | null;
+  createdAt: number;
+};
 export type IntakeAttachment = {
   name: string;
   contentType: string;
@@ -109,6 +118,7 @@ export type WorkspaceData = {
   users: AppUser[];
   consorcios: ConsortiumItem[];
   tasks: TaskItem[];
+  notifications: NotificationItem[];
   intakeItems: AutomaticIntakeItem[];
   daemons: DaemonInstanceItem[];
 };
@@ -123,6 +133,10 @@ type TaskRow = {
 type CommentRow = {
   id: string; task_id: string; body: string; created_at: number;
   author_id: string; author_name: string; source: TaskComment["source"];
+};
+type NotificationRow = {
+  id: string; kind: NotificationItem["kind"]; task_id: string | null;
+  title: string; message: string; read_at: number | null; created_at: number;
 };
 type AutomaticIntakeRow = {
   id: string; source: AutomaticIntakeItem["source"]; source_account: string; external_id: string;
@@ -195,6 +209,11 @@ export async function loadWorkspace(identity: AuthIdentity): Promise<WorkspaceDa
     : await tasksQuery.bind(user.workspaceId, user.id, user.id).all<TaskRow>();
 
   const taskRows = tasksResult.results ?? [];
+  await ensureDueNotifications(user, taskRows);
+  const notificationResult = await db.prepare(`SELECT id, kind, task_id, title, message, read_at, created_at
+    FROM notifications WHERE workspace_id = ? AND user_id = ?
+    ORDER BY read_at IS NULL DESC, created_at DESC LIMIT 50`)
+    .bind(user.workspaceId, user.id).all<NotificationRow>();
   const intakeResult = user.role === "admin"
     ? await db.prepare(`SELECT i.id, i.source, i.source_account, i.external_id, i.conversation_id,
         i.sender_name, i.sender_address, i.title, i.body, i.kind, i.priority, i.status,
@@ -263,6 +282,15 @@ export async function loadWorkspace(identity: AuthIdentity): Promise<WorkspaceDa
         authorName: comment.author_name,
         source: comment.source,
       })),
+    })),
+    notifications: (notificationResult.results ?? []).map((item) => ({
+      id: item.id,
+      kind: item.kind,
+      taskId: item.task_id,
+      title: item.title,
+      message: item.message,
+      readAt: item.read_at,
+      createdAt: item.created_at,
     })),
     intakeItems: (intakeResult.results ?? []).map((item) => ({
       id: item.id,
@@ -384,9 +412,11 @@ export async function ingestAutomaticItem(input: {
     return { ok: true, accepted: true, duplicate: true, intakeId: existing.id, taskId: existing.task_id, status: existing.status };
   }
 
-  const admin = await db.prepare(`SELECT id FROM users
-    WHERE role = 'admin' AND status = 'active' AND workspace_id = ? ORDER BY created_at LIMIT 1`)
-    .bind(workspaceId).first<{ id: string }>();
+  const adminsResult = await db.prepare(`SELECT id FROM users
+    WHERE role = 'admin' AND status = 'active' AND workspace_id = ? ORDER BY created_at`)
+    .bind(workspaceId).all<{ id: string }>();
+  const admins = adminsResult.results ?? [];
+  const admin = admins[0];
   if (!admin) throw new Error("No hay un administrador activo para recibir el ingreso");
   const actor = initiatedBy ?? { id: "system:daemon", name: "Demonio", username: "sistema", workspaceId };
   if (actor.workspaceId !== workspaceId) throw new Error("Espacio de actividad inválido");
@@ -425,14 +455,15 @@ export async function ingestAutomaticItem(input: {
   const taskDescription = `${sourceLabel} recibido desde ${sourceAccount}\nRemitente: ${senderLabel}\n\n${body || "Sin descripción adicional."}${attachmentNote}\n\nIngreso ${intakeId.slice(0, 8)} · pendiente de revisión.`;
 
   const linked = conversationId
-    ? await db.prepare(`SELECT i.task_id, t.status AS task_status, t.consortium_id
+    ? await db.prepare(`SELECT i.task_id, t.status AS task_status, t.consortium_id, t.creator_id, t.assignee_id
         FROM automatic_intake i JOIN tasks t ON t.id = i.task_id
         WHERE i.workspace_id = ? AND t.workspace_id = i.workspace_id
           AND i.source = ? AND i.source_account = ? AND i.conversation_id = ?
           AND i.task_id IS NOT NULL
         ORDER BY i.received_at DESC, i.created_at DESC LIMIT 1`)
       .bind(workspaceId, source, sourceAccount, conversationId)
-      .first<{ task_id: string; task_status: TaskItem["status"]; consortium_id: string | null }>()
+      .first<{ task_id: string; task_status: TaskItem["status"]; consortium_id: string | null;
+        creator_id: string; assignee_id: string | null }>()
     : null;
   const followUpSignal = ["resolved", "recurrence", "unknown"].includes(String(input.followUpSignal))
     ? input.followUpSignal as "resolved" | "recurrence" | "unknown"
@@ -479,6 +510,13 @@ export async function ingestAutomaticItem(input: {
       `Origen: ${sourceLabel}`, `Tarea: ${taskId}`,
       action === "reopened" ? "Tarea reabierta por reiteración del problema" : action === "ignored_resolved" ? "Mensaje vinculado sin reabrir la tarea finalizada" : "Mensaje agregado como comentario",
     ]));
+    const recipients = Array.from(new Set([linked.creator_id, linked.assignee_id])).filter((recipient): recipient is string => Boolean(recipient));
+    for (const recipient of recipients) {
+      statements.push(notificationStatement({ workspaceId, userId: recipient, kind: "intake", taskId,
+        title: action === "reopened" ? "Tarea reabierta" : "Nuevo mensaje recibido",
+        message: `${senderName} envió ${sourceLabel.toLocaleLowerCase("es")} sobre “${title}”.`,
+        dedupeKey: `intake:${intakeId}` }));
+    }
     try {
       await db.batch(statements);
     } catch (error) {
@@ -493,7 +531,7 @@ export async function ingestAutomaticItem(input: {
   }
 
   try {
-    await db.batch([
+    const statements = [
       db.prepare(`INSERT INTO tasks
         (id, title, description, building, priority, status, due_date, consortium_id, creator_id, assignee_id, created_at, updated_at, workspace_id)
         VALUES (?, ?, ?, ?, ?, 'review', NULL, ?, ?, ?, ?, ?, ?)`).bind(
@@ -511,7 +549,13 @@ export async function ingestAutomaticItem(input: {
         ),
       auditStatement(actor, initiatedBy ? "intake.simulated" : "intake.received", "intake", intakeId, title,
         [`Origen: ${sourceLabel}`, `Tarea creada en revisión: ${taskId}`, `Consorcio: ${consortium?.name || "Sin identificar"}`]),
-    ]);
+    ];
+    for (const recipient of admins.map((item) => item.id).filter((id) => id !== initiatedBy?.id)) {
+      statements.push(notificationStatement({ workspaceId, userId: recipient, kind: "intake", taskId,
+        title: "Nuevo ingreso automático", message: `${sourceLabel} de ${senderName}: “${title}”.`,
+        dedupeKey: `intake:${intakeId}` }));
+    }
+    await db.batch(statements);
   } catch (error) {
     const raced = await db.prepare(`SELECT id, status, task_id FROM automatic_intake
       WHERE workspace_id = ? AND source = ? AND source_account = ? AND external_id = ?`)
@@ -663,6 +707,48 @@ function validatedDueDate(value: unknown) {
   return dueDate;
 }
 
+function notificationStatement(input: {
+  workspaceId: string;
+  userId: string;
+  kind: NotificationItem["kind"];
+  taskId: string | null;
+  title: string;
+  message: string;
+  dedupeKey?: string | null;
+  createdAt?: number;
+}) {
+  return getDatabase().prepare(`INSERT OR IGNORE INTO notifications
+    (id, workspace_id, user_id, kind, task_id, title, message, dedupe_key, read_at, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)`)
+    .bind(crypto.randomUUID(), input.workspaceId, input.userId, input.kind, input.taskId,
+      input.title.slice(0, 200), input.message.slice(0, 1000), input.dedupeKey ?? null, input.createdAt ?? Date.now());
+}
+
+function buenosAiresDateKey() {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/Argentina/Buenos_Aires", year: "numeric", month: "2-digit", day: "2-digit",
+  }).formatToParts(new Date());
+  const value = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${value.year}-${value.month}-${value.day}`;
+}
+
+async function ensureDueNotifications(user: AppUser, taskRows: TaskRow[]) {
+  const today = buenosAiresDateKey();
+  const statements = taskRows.filter((task) => {
+    if (!task.due_date || task.due_date > today || task.status === "done") return false;
+    return (task.assignee_id ?? task.creator_id) === user.id;
+  }).map((task) => notificationStatement({
+    workspaceId: user.workspaceId,
+    userId: user.id,
+    kind: "due",
+    taskId: task.id,
+    title: task.due_date === today ? "Tarea para hoy" : "Tarea vencida",
+    message: task.due_date === today ? `“${task.title}” vence hoy.` : `“${task.title}” venció y todavía sigue pendiente.`,
+    dedupeKey: `due:${task.id}:${task.due_date}`,
+  }));
+  if (statements.length) await getDatabase().batch(statements);
+}
+
 export async function createTask(identity: AuthIdentity, input: {
   title: string; description?: string; consortiumId?: string | null; priority?: string;
   status?: string; dueDate?: string | null; assigneeId?: string | null;
@@ -691,14 +777,19 @@ export async function createTask(identity: AuthIdentity, input: {
   const now = Date.now();
   const taskId = crypto.randomUUID();
   const snapshot = await taskAuditValues({ status, priority, assignee_id: input.assigneeId }, user.workspaceId);
-  await db.batch([db.prepare(`INSERT INTO tasks
+  const statements = [db.prepare(`INSERT INTO tasks
     (id, title, description, building, priority, status, due_date, consortium_id, creator_id, assignee_id, created_at, updated_at, workspace_id)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
     .bind(taskId, title, description, building,
       priority, status, dueDate, input.consortiumId || null, user.id, input.assigneeId || null, now, now, user.workspaceId),
     auditStatement(user, "task.created", "task", taskId, title, [`Estado: ${snapshot.status}`, `Prioridad: ${snapshot.priority}`,
       `Asignada a: ${snapshot.assignee_id}`, `Consorcio: ${building || "Sin consorcio"}`, `Vencimiento: ${dueDate || "Sin fecha"}`]),
-  ]);
+  ];
+  if (input.assigneeId && input.assigneeId !== user.id) {
+    statements.push(notificationStatement({ workspaceId: user.workspaceId, userId: input.assigneeId,
+      kind: "assignment", taskId, title: "Nueva tarea asignada", message: `${user.name} te asignó “${title}”.` }));
+  }
+  await db.batch(statements);
   return loadWorkspace(identity);
 }
 
@@ -759,10 +850,50 @@ export async function updateTask(identity: AuthIdentity, taskId: string, input: 
   const action = changes.length === 1 && changes[0].startsWith("Estado:") ? "task.status_changed"
     : changes.length === 1 && changes[0].startsWith("Asignada a:") ? "task.assigned" : "task.updated";
   fields.push("updated_at = ?"); values.push(Date.now(), taskId, user.workspaceId);
-  await db.batch([
+  const statements = [
     db.prepare(`UPDATE tasks SET ${fields.join(", ")} WHERE id = ? AND workspace_id = ?`).bind(...values),
     auditStatement(user, action, "task", taskId, String(after.title), changes),
-  ]);
+  ];
+  const assigneeChanged = task.assignee_id !== after.assignee_id;
+  const statusChanged = task.status !== after.status;
+  const dueDateChanged = task.due_date !== after.due_date;
+  if (assigneeChanged || dueDateChanged) {
+    statements.push(db.prepare(`DELETE FROM notifications
+      WHERE workspace_id = ? AND task_id = ? AND kind = 'due' AND read_at IS NULL`).bind(user.workspaceId, taskId));
+  } else if (statusChanged && after.status === "done") {
+    statements.push(db.prepare(`UPDATE notifications SET read_at = ?
+      WHERE workspace_id = ? AND task_id = ? AND kind = 'due' AND read_at IS NULL`).bind(Date.now(), user.workspaceId, taskId));
+  }
+  if (assigneeChanged && after.assignee_id && after.assignee_id !== user.id) {
+    statements.push(notificationStatement({ workspaceId: user.workspaceId, userId: String(after.assignee_id),
+      kind: "assignment", taskId, title: "Nueva tarea asignada", message: `${user.name} te asignó “${String(after.title)}”.` }));
+  }
+  if (statusChanged) {
+    const recipients = Array.from(new Set([String(after.creator_id), after.assignee_id ? String(after.assignee_id) : null]))
+      .filter((recipient): recipient is string => Boolean(recipient) && recipient !== user.id
+        && !(assigneeChanged && recipient === after.assignee_id));
+    for (const recipient of recipients) {
+      statements.push(notificationStatement({ workspaceId: user.workspaceId, userId: recipient,
+        kind: "status", taskId, title: "Estado actualizado",
+        message: `${user.name} cambió “${String(after.title)}” a ${taskStateLabels[String(after.status)] ?? String(after.status)}.` }));
+    }
+  }
+  await db.batch(statements);
+  return loadWorkspace(identity);
+}
+
+export async function markNotificationRead(identity: AuthIdentity, notificationId?: string) {
+  const user = await currentUser(identity);
+  const db = getDatabase();
+  const now = Date.now();
+  if (!notificationId || notificationId === "all") {
+    await db.prepare(`UPDATE notifications SET read_at = ?
+      WHERE workspace_id = ? AND user_id = ? AND read_at IS NULL`).bind(now, user.workspaceId, user.id).run();
+  } else {
+    await db.prepare(`UPDATE notifications SET read_at = ?
+      WHERE id = ? AND workspace_id = ? AND user_id = ? AND read_at IS NULL`)
+      .bind(now, notificationId, user.workspaceId, user.id).run();
+  }
   return loadWorkspace(identity);
 }
 
@@ -888,11 +1019,19 @@ export async function addComment(identity: AuthIdentity, taskId: string, bodyVal
     throw new Error("Tarea no encontrada");
   }
   const now = Date.now();
-  await db.batch([
+  const statements = [
     db.prepare("INSERT INTO comments (id, task_id, author_id, body, created_at) VALUES (?, ?, ?, ?, ?)")
       .bind(crypto.randomUUID(), taskId, user.id, body, now),
     db.prepare("UPDATE tasks SET updated_at = ? WHERE id = ?").bind(now, taskId),
     auditStatement(user, "task.commented", "task", taskId, task.title, [`Comentario: ${auditText(body)}`]),
-  ]);
+  ];
+  const recipients = Array.from(new Set([task.creator_id, task.assignee_id]))
+    .filter((recipient): recipient is string => Boolean(recipient) && recipient !== user.id);
+  for (const recipient of recipients) {
+    statements.push(notificationStatement({ workspaceId: user.workspaceId, userId: recipient,
+      kind: "comment", taskId, title: "Nuevo comentario",
+      message: `${user.name} comentó en “${task.title}”: ${body}` }));
+  }
+  await db.batch(statements);
   return loadWorkspace(identity);
 }
