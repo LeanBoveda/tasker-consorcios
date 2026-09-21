@@ -146,3 +146,22 @@ test("prevents repeated login submissions and duplicate access records", async (
   assert.match(auth, /INSERT OR IGNORE INTO activity_log/);
   assert.match(auth, /loginAuditId/);
 });
+
+test("offers a separate read-only board for active task states", async () => {
+  const [app, page, board] = await Promise.all([
+    source("app/TaskApp.tsx"),
+    source("app/panel/page.tsx"),
+    source("app/panel/ReadOnlyBoard.tsx"),
+  ]);
+
+  assert.match(app, /href="\/panel"/);
+  assert.match(app, /Vista de panel/);
+  assert.match(page, /getCurrentIdentity/);
+  assert.match(page, /loadWorkspace/);
+  assert.match(board, /Panel de solo lectura/);
+  assert.match(board, /key: "pending"/);
+  assert.match(board, /key: "in_progress"/);
+  assert.match(board, /key: "review"/);
+  assert.doesNotMatch(board, /key: "done"/);
+  assert.doesNotMatch(board, /method: "(?:POST|PATCH|DELETE)"/);
+});

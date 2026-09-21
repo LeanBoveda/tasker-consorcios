@@ -430,6 +430,7 @@ export default function TaskApp({ initialData }: { initialData: WorkspaceData })
             <p className="subtitle">{pageHeader.subtitle}</p>
           </div>
           <div className="topbar-actions">
+            {isTaskView && <a className="readonly-panel-button" href="/panel" target="_blank" rel="noopener noreferrer"><span aria-hidden="true">▥</span> Vista de panel</a>}
             {isTaskView && searchOpen && <input className="search-input" autoFocus value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar tarea o consorcio…" aria-label="Buscar" />}
             {isTaskView && <button className="icon-button" aria-label="Buscar" onClick={() => setSearchOpen((value) => !value)}>⌕</button>}
             <button className={`icon-button notification ${unreadNotifications.length ? "has-unread" : ""}`} aria-label={`${unreadNotifications.length} notificaciones sin leer`} aria-expanded={notificationsOpen} onClick={() => setNotificationsOpen((value) => !value)}><span aria-hidden="true">♢</span>{unreadNotifications.length > 0 && <span className="notification-count">{unreadNotifications.length > 99 ? "99+" : unreadNotifications.length}</span>}</button>
