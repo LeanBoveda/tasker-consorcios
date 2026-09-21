@@ -72,15 +72,17 @@ function equalHex(left: string, right: string) {
   return difference === 0;
 }
 
-function loginAuditStatement(user: LoginRow, now: number) {
-  return getDatabase().prepare(`INSERT INTO activity_log
+async function loginAuditId(userId: string, now: number) {
+  const bucket = Math.floor(now / LOGIN_AUDIT_DEDUPE_MS);
+  const value = await sha256(`${userId}:session.login:${bucket}`);
+  return `${value.slice(0, 8)}-${value.slice(8, 12)}-${value.slice(12, 16)}-${value.slice(16, 20)}-${value.slice(20, 32)}`;
+}
+
+function loginAuditStatement(user: LoginRow, now: number, id: string) {
+  return getDatabase().prepare(`INSERT OR IGNORE INTO activity_log
     (id, workspace_id, actor_id, actor_name, actor_username, action, entity_type, entity_id, entity_label, details, created_at)
-    SELECT ?, ?, ?, ?, ?, 'session.login', 'session', NULL, 'Inicio de sesión', '[]', ?
-    WHERE NOT EXISTS (
-      SELECT 1 FROM activity_log
-      WHERE workspace_id = ? AND actor_id = ? AND action = 'session.login' AND created_at >= ?
-    )`).bind(crypto.randomUUID(), user.workspaceId, user.id, user.name, user.username || "", now,
-      user.workspaceId, user.id, now - LOGIN_AUDIT_DEDUPE_MS);
+    VALUES (?, ?, ?, ?, ?, 'session.login', 'session', NULL, 'Inicio de sesión', '[]', ?)`)
+    .bind(id, user.workspaceId, user.id, user.name, user.username || "", now);
 }
 
 export async function ensureBootstrapAdmin() {
@@ -144,11 +146,12 @@ export async function login(usernameValue: string, password: string) {
   const token = randomHex(32);
   const tokenHash = await sha256(token);
   const now = Date.now();
+  const auditId = await loginAuditId(user.id, now);
   await getDatabase().batch([
     getDatabase().prepare("INSERT INTO sessions (id, user_id, created_at, expires_at) VALUES (?, ?, ?, ?)")
       .bind(tokenHash, user.id, now, now + SESSION_DURATION_MS),
     getDatabase().prepare("UPDATE users SET last_seen_at = ? WHERE id = ?").bind(now, user.id),
-    loginAuditStatement(user, now),
+    loginAuditStatement(user, now, auditId),
   ]);
   return { token, expiresAt: now + SESSION_DURATION_MS };
 }

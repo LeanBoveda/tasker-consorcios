@@ -143,5 +143,6 @@ test("prevents repeated login submissions and duplicate access records", async (
   assert.match(form, /disabled=\{loading\}/);
   assert.doesNotMatch(form, /router\.refresh\(\)/);
   assert.match(auth, /LOGIN_AUDIT_DEDUPE_MS/);
-  assert.match(auth, /WHERE NOT EXISTS/);
+  assert.match(auth, /INSERT OR IGNORE INTO activity_log/);
+  assert.match(auth, /loginAuditId/);
 });
