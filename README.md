@@ -21,6 +21,9 @@ Tasker es una aplicación interna para organizar el trabajo diario de una admini
 - Administración de usuarios desde la página o mediante Excel/CSV.
 - Eliminación de tareas, perfiles y consorcios con confirmación.
 - Búsqueda y filtros por persona y consorcio.
+- Edición completa de tareas y panel separado de solo lectura.
+- Notificaciones internas por asignación, comentarios, cambios, vencimientos e ingresos.
+- Historial de actividad para administradores.
 - Bandeja de ingresos automáticos para correo y WhatsApp.
 - Panel de estado de la computadora receptora y sus fuentes.
 - Demonio local para una casilla central de Gmail, con limpieza, deduplicación y reintentos.
@@ -47,6 +50,8 @@ Requiere Node.js 22.13 o posterior.
 npm install
 npm run dev
 npm run build
+npm test
+npm run lint
 ```
 
 La aplicación local utiliza el enlace D1 `DB` simulado por la configuración de Vite y Wrangler.
@@ -64,4 +69,4 @@ La documentación está dividida por audiencia:
 
 ## Estado actual
 
-Versión documentada: 1.1, agosto de 2026. Tasker está activo y el demonio 0.1 para Gmail central ya está preparado para instalar. La conexión de WhatsApp y las notificaciones externas son las siguientes etapas.
+Versión documentada: 1.2, octubre de 2026. Tasker está activo, cuenta con pruebas automáticas y el demonio 0.1 para Gmail central está preparado para instalar. La conexión de WhatsApp, los adjuntos reales y las notificaciones externas siguen pendientes.

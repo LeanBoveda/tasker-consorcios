@@ -29,6 +29,9 @@
 | POST | `/api/daemon/heartbeat` | Registra estado de PC y fuentes. | Clave del demonio. |
 | POST | `/api/intake/test` | Simula un ingreso automático. | Administrador. |
 | PATCH | `/api/intake/:id` | Confirma o descarta un ingreso. | Administrador. |
+| GET | `/api/activity` | Lista el historial con filtros y cursor. | Administrador. |
+| PATCH | `/api/notifications/:id` | Marca un aviso como leído. | Usuario dueño del aviso. |
+| PATCH | `/api/notifications` | Marca todos los avisos propios como leídos. | Usuario activo. |
 
 ## 3. Cuerpos principales
 
@@ -211,6 +214,8 @@ Las sesiones vencidas se limpian durante la inicialización. Al dar de baja un u
 - La combinación de origen, cuenta e identificador externo evita reprocesar el mismo evento.
 - `daemon_instances` conserva computadora, versión, inicio y última señal.
 - `daemon_sources` conserva tipo, cuenta, conexión, último control, último mensaje y error.
+- `notifications` conserva avisos internos personales, lectura y claves de deduplicación.
+- `activity_log` conserva una instantánea del actor y los cambios relevantes sin depender de que el perfil o la tarea sigan existiendo.
 
 ## 11. Reglas de eliminación
 
@@ -224,10 +229,12 @@ Las sesiones vencidas se limpian durante la inicialización. Al dar de baja un u
 ## 12. Forma de respuesta `WorkspaceData`
 
 ```text
+loadedAt      Momento en que el servidor armó la respuesta
 currentUser   Perfil autenticado
 users         Usuarios activos
 consorcios    Catálogo completo
 tasks         Tareas visibles para currentUser, con comentarios
+notifications Avisos personales del usuario actual
 intakeItems   Ingresos automáticos visibles para administradores
 daemons       Computadoras y fuentes visibles para administradores
 ```

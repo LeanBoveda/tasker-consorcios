@@ -89,7 +89,7 @@ export default function TaskApp({ initialData }: { initialData: WorkspaceData })
     task.creatorId === data.currentUser.id && task.assigneeId && task.assigneeId !== data.currentUser.id && task.status !== "done"
   );
   const completedThisWeek = data.tasks.filter((task) =>
-    task.status === "done" && task.updatedAt > Date.now() - 7 * 86400000
+    task.status === "done" && task.updatedAt > data.loadedAt - 7 * 86400000
   );
   const pendingIntake = data.intakeItems.filter((item) => item.status === "pending" || item.status === "error");
   const unreadNotifications = data.notifications.filter((item) => item.readAt === null);
@@ -431,7 +431,7 @@ export default function TaskApp({ initialData }: { initialData: WorkspaceData })
           </div>
           <div className="topbar-actions">
             {isTaskView && <a className="readonly-panel-button" href="/panel" target="_blank" rel="noopener noreferrer"><span aria-hidden="true">▥</span> Vista de panel</a>}
-            {isTaskView && searchOpen && <input className="search-input" autoFocus value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar tarea o consorcio…" aria-label="Buscar" />}
+            {isTaskView && searchOpen && <input className="search-input" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar tarea o consorcio…" aria-label="Buscar" />}
             {isTaskView && <button className="icon-button" aria-label="Buscar" onClick={() => setSearchOpen((value) => !value)}>⌕</button>}
             <button className={`icon-button notification ${unreadNotifications.length ? "has-unread" : ""}`} aria-label={`${unreadNotifications.length} notificaciones sin leer`} aria-expanded={notificationsOpen} onClick={() => setNotificationsOpen((value) => !value)}><span aria-hidden="true">♢</span>{unreadNotifications.length > 0 && <span className="notification-count">{unreadNotifications.length > 99 ? "99+" : unreadNotifications.length}</span>}</button>
             {view === "intake" && data.currentUser.role === "admin"
@@ -443,8 +443,9 @@ export default function TaskApp({ initialData }: { initialData: WorkspaceData })
         </header>
 
         {notificationsOpen && (
-          <div className="notification-layer" onMouseDown={() => setNotificationsOpen(false)}>
-            <section className="notification-panel" role="dialog" aria-modal="true" aria-labelledby="notifications-title" onMouseDown={(event) => event.stopPropagation()}>
+          <dialog open className="notification-layer" aria-labelledby="notifications-title">
+            <button className="dialog-dismiss-layer" type="button" tabIndex={-1} aria-label="Cerrar notificaciones" onClick={() => setNotificationsOpen(false)} />
+            <section className="notification-panel">
               <div className="notification-panel-head">
                 <div><span className="modal-kicker">AVISOS</span><h2 id="notifications-title">Notificaciones</h2><p>{unreadNotifications.length ? `${unreadNotifications.length} sin leer` : "Todo al día"}</p></div>
                 <div>{unreadNotifications.length > 0 && <button className="row-button" disabled={notificationSaving} onClick={() => void updateNotifications("/api/notifications")}>Marcar todas como leídas</button>}<button className="close-button" onClick={() => setNotificationsOpen(false)} aria-label="Cerrar">×</button></div>
@@ -461,7 +462,7 @@ export default function TaskApp({ initialData }: { initialData: WorkspaceData })
               </div>
               <p className="notification-refresh-note">Tasker revisa nuevos avisos automáticamente mientras la página está abierta.</p>
             </section>
-          </div>
+          </dialog>
         )}
 
         {isTaskView ? <>
@@ -636,11 +637,12 @@ export default function TaskApp({ initialData }: { initialData: WorkspaceData })
       </section>
 
       {newTaskOpen && (
-        <div className="modal-backdrop" onMouseDown={() => setNewTaskOpen(false)}>
-          <section className="modal" role="dialog" aria-modal="true" aria-labelledby="new-task-title" onMouseDown={(event) => event.stopPropagation()}>
+        <dialog open className="modal-backdrop" aria-labelledby="new-task-title">
+          <button className="dialog-dismiss-layer" type="button" tabIndex={-1} aria-label="Cerrar nueva tarea" onClick={() => setNewTaskOpen(false)} />
+          <section className="modal">
             <div className="modal-header"><div><span className="modal-kicker">NUEVA TAREA</span><h2 id="new-task-title">¿Qué hay que resolver?</h2></div><button className="close-button" onClick={() => setNewTaskOpen(false)} aria-label="Cerrar">×</button></div>
             <form onSubmit={submitTask}>
-              <label>Título<input name="title" required autoFocus maxLength={500} placeholder="Ej. Coordinar visita del ascensorista" /></label>
+              <label>Título<input name="title" required maxLength={500} placeholder="Ej. Coordinar visita del ascensorista" /></label>
               <label>Descripción<textarea name="description" rows={3} maxLength={20000} placeholder="Agregá contexto, datos del proveedor o próximos pasos…" /></label>
               <div className="form-grid">
                 <label>Consorcio<select name="consortiumId" defaultValue=""><option value="">Sin consorcio</option>{data.consorcios.map((item) => <option value={item.id} key={item.id}>{item.name}{item.address ? ` · ${item.address}` : ""}</option>)}</select></label><label>Fecha límite<input name="dueDate" type="date" /></label>
@@ -651,12 +653,13 @@ export default function TaskApp({ initialData }: { initialData: WorkspaceData })
               <div className="modal-actions"><button type="button" className="secondary-button" onClick={() => setNewTaskOpen(false)}>Cancelar</button><button className="primary-button" disabled={saving}>{saving ? "Guardando…" : "Crear tarea"}</button></div>
             </form>
           </section>
-        </div>
+        </dialog>
       )}
 
       {selectedTask && (
-        <div className="drawer-backdrop" onMouseDown={() => { setSelectedTaskId(null); setTaskEditDraft(null); }}>
-          <aside className="task-drawer" role="dialog" aria-modal="true" aria-labelledby="task-detail-title" onMouseDown={(event) => event.stopPropagation()}>
+        <dialog open className="drawer-backdrop" aria-labelledby="task-detail-title">
+          <button className="dialog-dismiss-layer" type="button" tabIndex={-1} aria-label="Cerrar detalle" onClick={() => { setSelectedTaskId(null); setTaskEditDraft(null); }} />
+          <aside className="task-drawer">
             <div className="drawer-top"><span className={`visibility-pill ${selectedTask.assigneeId ? "shared" : ""}`}>{selectedTask.assigneeId ? "Compartida" : "Privada"}</span><div className="drawer-actions">{(selectedTask.creatorId === data.currentUser.id || isAdmin) && <button className="row-button" onClick={() => openTaskEditor(selectedTask)}>Editar tarea</button>}<button className="close-button" onClick={() => { setSelectedTaskId(null); setTaskEditDraft(null); }} aria-label="Cerrar">×</button></div></div>
             <h2 id="task-detail-title">{selectedTask.title}</h2><p className="drawer-description">{selectedTask.description || "Sin descripción."}</p>
             <div className="detail-grid">
@@ -682,15 +685,16 @@ export default function TaskApp({ initialData }: { initialData: WorkspaceData })
               </div>
             )}
           </aside>
-        </div>
+        </dialog>
       )}
 
       {selectedTask && taskEditDraft && (
-        <div className="modal-backdrop elevated" onMouseDown={() => setTaskEditDraft(null)}>
-          <section className="modal task-edit-modal" role="dialog" aria-modal="true" aria-labelledby="edit-task-title" onMouseDown={(event) => event.stopPropagation()}>
+        <dialog open className="modal-backdrop elevated" aria-labelledby="edit-task-title">
+          <button className="dialog-dismiss-layer" type="button" tabIndex={-1} aria-label="Cerrar edición" onClick={() => setTaskEditDraft(null)} />
+          <section className="modal task-edit-modal">
             <div className="modal-header"><div><span className="modal-kicker">EDITAR TAREA</span><h2 id="edit-task-title">Actualizar todos los datos</h2></div><button className="close-button" onClick={() => setTaskEditDraft(null)} aria-label="Cerrar">×</button></div>
             <form onSubmit={submitTaskEdit}>
-              <label>Título<input required autoFocus maxLength={500} value={taskEditDraft.title} onChange={(event) => setTaskEditDraft({ ...taskEditDraft, title: event.target.value })} /></label>
+              <label>Título<input required maxLength={500} value={taskEditDraft.title} onChange={(event) => setTaskEditDraft({ ...taskEditDraft, title: event.target.value })} /></label>
               <label>Descripción<textarea rows={5} maxLength={20000} value={taskEditDraft.description} onChange={(event) => setTaskEditDraft({ ...taskEditDraft, description: event.target.value })} placeholder="Contexto, datos del proveedor o próximos pasos…" /></label>
               <div className="form-grid">
                 <label>Estado<select value={taskEditDraft.status} onChange={(event) => setTaskEditDraft({ ...taskEditDraft, status: event.target.value as TaskItem["status"] })}>{columns.map((column) => <option value={column.key} key={column.key}>{column.label}</option>)}</select></label>
@@ -703,26 +707,28 @@ export default function TaskApp({ initialData }: { initialData: WorkspaceData })
               <div className="modal-actions"><button type="button" className="secondary-button" onClick={() => setTaskEditDraft(null)}>Cancelar</button><button className="primary-button" disabled={saving}>{saving ? "Guardando…" : "Guardar cambios"}</button></div>
             </form>
           </section>
-        </div>
+        </dialog>
       )}
 
       {teamOpen && (
-        <div className="modal-backdrop" onMouseDown={() => setTeamOpen(false)}>
-          <section className="modal team-modal" role="dialog" aria-modal="true" aria-labelledby="team-title" onMouseDown={(event) => event.stopPropagation()}>
+        <dialog open className="modal-backdrop" aria-labelledby="team-title">
+          <button className="dialog-dismiss-layer" type="button" tabIndex={-1} aria-label="Cerrar equipo" onClick={() => setTeamOpen(false)} />
+          <section className="modal team-modal">
             <div className="modal-header"><div><span className="modal-kicker">EQUIPO</span><h2 id="team-title">Personas de la administración</h2></div><button className="close-button" onClick={() => setTeamOpen(false)} aria-label="Cerrar">×</button></div>
             <div className="team-list">{data.users.map((user) => <article className="team-row" key={user.id}><span className="avatar avatar-owner">{initials(user.name)}</span><div><strong>{user.name}</strong><span>@{user.username}</span></div><div className="team-row-actions"><span className={`member-status ${user.status}`}>{user.role === "admin" ? "Administrador" : "Usuario"}</span>{data.currentUser.role === "admin" && <><button className="row-button" onClick={() => setUserDraft({ id: user.id, name: user.name, username: user.username, role: user.role, password: "" })}>Editar</button>{user.id !== data.currentUser.id && <button className="row-button danger" onClick={() => removeUser(user.id, user.name)}>Eliminar</button>}</>}</div></article>)}</div>
             <p className="team-help">Podés editar o eliminar perfiles desde este panel. Usá el Excel cuando necesites crear o actualizar varios usuarios juntos.</p>
             {data.currentUser.role === "admin" && <div className="modal-actions"><button className="primary-button" onClick={() => setImportOpen(true)}>▦ Importar Excel</button></div>}
           </section>
-        </div>
+        </dialog>
       )}
 
       {userDraft.id && (
-        <div className="modal-backdrop elevated" onMouseDown={() => setUserDraft({ id: null, name: "", username: "", role: "member", password: "" })}>
-          <section className="modal compact-modal profile-edit-modal" role="dialog" aria-modal="true" aria-labelledby="edit-user-title" onMouseDown={(event) => event.stopPropagation()}>
+        <dialog open className="modal-backdrop elevated" aria-labelledby="edit-user-title">
+          <button className="dialog-dismiss-layer" type="button" tabIndex={-1} aria-label="Cerrar edición de perfil" onClick={() => setUserDraft({ id: null, name: "", username: "", role: "member", password: "" })} />
+          <section className="modal compact-modal profile-edit-modal">
             <div className="modal-header"><div><span className="modal-kicker">EDITAR PERFIL</span><h2 id="edit-user-title">Datos del usuario</h2></div><button className="close-button" onClick={() => setUserDraft({ id: null, name: "", username: "", role: "member", password: "" })} aria-label="Cerrar">×</button></div>
             <form onSubmit={submitUserProfile}>
-              <label>Nombre<input required autoFocus value={userDraft.name} onChange={(event) => setUserDraft((draft) => ({ ...draft, name: event.target.value }))} /></label>
+              <label>Nombre<input required value={userDraft.name} onChange={(event) => setUserDraft((draft) => ({ ...draft, name: event.target.value }))} /></label>
               <label>Usuario<input required value={userDraft.username} onChange={(event) => setUserDraft((draft) => ({ ...draft, username: event.target.value }))} /></label>
               <label>Rol<select value={userDraft.role} onChange={(event) => setUserDraft((draft) => ({ ...draft, role: event.target.value as "admin" | "member" }))}><option value="member">Usuario</option><option value="admin">Administrador</option></select></label>
               <label>Nueva contraseña<input type="text" value={userDraft.password} onChange={(event) => setUserDraft((draft) => ({ ...draft, password: event.target.value }))} placeholder="Dejar vacío para mantener la actual" /></label>
@@ -730,12 +736,13 @@ export default function TaskApp({ initialData }: { initialData: WorkspaceData })
               <div className="modal-actions"><button type="button" className="secondary-button" onClick={() => setUserDraft({ id: null, name: "", username: "", role: "member", password: "" })}>Cancelar</button><button className="primary-button" disabled={saving}><span aria-hidden="true">✓</span>{saving ? "Guardando…" : "Guardar cambios"}</button></div>
             </form>
           </section>
-        </div>
+        </dialog>
       )}
 
       {consortiaOpen && (
-        <div className="modal-backdrop" onMouseDown={() => setConsortiaOpen(false)}>
-          <section className="modal consortia-modal" role="dialog" aria-modal="true" aria-labelledby="consortia-title" onMouseDown={(event) => event.stopPropagation()}>
+        <dialog open className="modal-backdrop" aria-labelledby="consortia-title">
+          <button className="dialog-dismiss-layer" type="button" tabIndex={-1} aria-label="Cerrar consorcios" onClick={() => setConsortiaOpen(false)} />
+          <section className="modal consortia-modal">
             <div className="modal-header"><div><span className="modal-kicker">CATÁLOGO</span><h2 id="consortia-title">Consorcios administrados</h2></div><button className="close-button" onClick={() => setConsortiaOpen(false)} aria-label="Cerrar">×</button></div>
             {data.currentUser.role === "admin" && (
               <form className="consortium-form" onSubmit={submitConsortium}>
@@ -761,12 +768,13 @@ export default function TaskApp({ initialData }: { initialData: WorkspaceData })
               {data.consorcios.length === 0 && <p className="empty-consortia">Todavía no hay consorcios. Agregá el primero para poder seleccionarlo en las tareas.</p>}
             </div>
           </section>
-        </div>
+        </dialog>
       )}
 
       {intakeTestOpen && (
-        <div className="modal-backdrop elevated" onMouseDown={() => setIntakeTestOpen(false)}>
-          <section className="modal intake-test-modal" role="dialog" aria-modal="true" aria-labelledby="intake-test-title" onMouseDown={(event) => event.stopPropagation()}>
+        <dialog open className="modal-backdrop elevated" aria-labelledby="intake-test-title">
+          <button className="dialog-dismiss-layer" type="button" tabIndex={-1} aria-label="Cerrar simulación" onClick={() => setIntakeTestOpen(false)} />
+          <section className="modal intake-test-modal">
             <div className="modal-header"><div><span className="modal-kicker">PRUEBA DEL RECEPTOR</span><h2 id="intake-test-title">Simular mensaje del demonio</h2></div><button className="close-button" onClick={() => setIntakeTestOpen(false)} aria-label="Cerrar">×</button></div>
             <div className="test-mode-note intake-test-note"><span aria-hidden="true">●</span><p><strong>Esta prueba sí crea una tarea.</strong> Quedará en En revisión y marcada como simulación para comprobar el flujo completo.</p></div>
             <form onSubmit={submitIntakeTest}>
@@ -782,7 +790,7 @@ export default function TaskApp({ initialData }: { initialData: WorkspaceData })
               <div className="modal-actions"><button type="button" className="secondary-button" onClick={() => setIntakeTestOpen(false)}>Cancelar</button><button className="primary-button" disabled={saving}>{saving ? "Procesando…" : "Enviar a Tasker"}</button></div>
             </form>
           </section>
-        </div>
+        </dialog>
       )}
 
       {importOpen && <UserImport onClose={() => setImportOpen(false)} onImported={(workspace) => { setData(workspace); setNotice("Usuarios importados"); }} />}

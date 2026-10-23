@@ -105,8 +105,9 @@ export default function UserImport({ onClose, onImported }: {
   }
 
   return (
-    <div className="modal-backdrop elevated" onMouseDown={onClose}>
-      <section className="modal import-modal" role="dialog" aria-modal="true" aria-labelledby="import-title" onMouseDown={(event) => event.stopPropagation()}>
+    <dialog open className="modal-backdrop elevated" aria-labelledby="import-title">
+      <button className="dialog-dismiss-layer" type="button" tabIndex={-1} aria-label="Cerrar importación" onClick={onClose} />
+      <section className="modal import-modal">
         <div className="modal-header">
           <div><span className="modal-kicker">USUARIOS</span><h2 id="import-title">Importar desde Excel</h2></div>
           <button className="close-button" onClick={onClose} aria-label="Cerrar">×</button>
@@ -129,6 +130,6 @@ export default function UserImport({ onClose, onImported }: {
         )}
         <div className="modal-actions"><button className="secondary-button" onClick={onClose}>Cancelar</button><button className="primary-button" disabled={!users.length || loading} onClick={importFile}>{loading ? "Importando…" : "Importar usuarios"}</button></div>
       </section>
-    </div>
+    </dialog>
   );
 }

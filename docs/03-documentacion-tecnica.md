@@ -30,7 +30,7 @@ Gmail central -> Tasker Daemon (Windows/Python) -> API segura -> D1 -> Bandeja y
 | Interfaz | React 19, TypeScript | Tablero, formularios, modales, filtros y comentarios. |
 | Framework | Vinext y Vite | Enrutamiento, renderizado y compilación. |
 | Servidor | Cloudflare Worker | Atiende páginas y rutas API. |
-| Persistencia | Cloudflare D1 | Guarda usuarios, sesiones, consorcios, tareas y comentarios. |
+| Persistencia | Cloudflare D1 | Guarda usuarios, sesiones, tareas, avisos, auditoría e ingresos automáticos. |
 | Esquema | Drizzle ORM | Define tablas, índices y migraciones. |
 | Alojamiento | OpenAI Sites | Publicación, URL y enlace de recursos. |
 | Receptor local | Python 3.11 y Gmail API | Consulta mensajes nuevos, limpia, deduplica y reintenta. |
@@ -45,9 +45,10 @@ app/
   UserImport.tsx       Lectura de Excel y CSV
 db/
   auth-store.ts        Inicio de sesión, sesiones y perfiles
-  database.ts          Inicialización y acceso a D1
+  database.ts          Acceso al enlace D1
   schema.ts            Esquema Drizzle
   task-store.ts        Reglas de tareas, comentarios y consorcios
+  activity-store.ts    Consulta y escritura del historial de actividad
 drizzle/               Migraciones SQL versionadas
 lib/current-user.ts    Resolución de la identidad actual
 worker/index.ts        Entrada del Cloudflare Worker
@@ -149,9 +150,9 @@ El administrador obtiene una vista global. Un usuario común mantiene la regla `
 
 ## 8. Inicialización de la base
 
-`ensureDatabase()` crea las tablas e índices si no existen, agrega columnas faltantes de versiones anteriores, limpia sesiones vencidas y ejecuta `PRAGMA optimize`.
+`db/schema.ts` y las migraciones versionadas de `drizzle/` son la única fuente del esquema. Sites aplica esas migraciones al recurso D1 durante la publicación.
 
-También migra nombres históricos de edificios: si una tarea antigua contiene un nombre en `building` sin `consortium_id`, crea o reutiliza el consorcio correspondiente y vincula la tarea.
+`ensureDatabase()` conserva el contrato usado por los servicios, pero solo valida que el enlace `DB` exista. No crea ni altera tablas durante una solicitud.
 
 ## 9. Administrador de arranque
 
@@ -186,14 +187,16 @@ GitHub conserva código, migraciones y documentación. No contiene los registros
 
 ## 13. Pruebas
 
-La validación práctica usada en el mantenimiento incluye:
+La validación automática incluye:
 
-- Compilación completa.
-- Pruebas de inicio de sesión.
-- Creación, asignación, modificación y eliminación por API.
-- Comprobaciones de permisos entre administrador y usuario común.
+- Compilación de producción y ESLint.
+- Reconstrucción del esquema completo desde una base vacía.
+- Inicio y cierre de sesión, aislamiento de espacios y permisos.
+- Creación, asignación, edición y eliminación de tareas.
+- Actividad, notificaciones e ingresos automáticos.
+- Clasificación, limpieza y cola persistente del demonio.
 
-El archivo `tests/rendered-html.test.mjs` proviene del starter original y todavía verifica una pantalla de carga que ya no representa Tasker. Debe considerarse deuda técnica y no cobertura funcional válida hasta ser reemplazado.
+GitHub Actions ejecuta estos controles en cada cambio de la rama principal y en cada pull request. Las verificaciones de `rendered-html.test.mjs` son contratos estáticos; `workspace-isolation.test.mjs` y `schema-migrations.test.mjs` ejercen la base SQLite y los servicios reales.
 
 ## 14. Limitaciones conocidas
 
@@ -204,19 +207,14 @@ El archivo `tests/rendered-html.test.mjs` proviene del starter original y todav�
 - No hay adjuntos.
 - No hay papelera para tareas.
 - No hay exportación completa desde la interfaz.
-- No hay registro de auditoría separado de los comentarios.
 - La versión 0.1 del demonio registra metadatos de adjuntos, pero todavía no guarda sus bytes en Tasker.
 - WhatsApp todavía no está conectado.
-- La interfaz no permite editar título, descripción ni vencimiento después de crear la tarea.
-- Las pruebas automatizadas del starter deben actualizarse.
 
 ## 15. Extensiones futuras posibles
 
-- Centro de notificaciones internas.
 - Correos opcionales por asignación o comentario.
 - Exportación CSV/Excel de tareas y consorcios.
 - Copias de seguridad administrables.
 - Adjuntos en R2.
-- Auditoría de cambios.
 - Papelera con restauración.
-- Edición completa de tareas.
+- Pruebas de interfaz de extremo a extremo.

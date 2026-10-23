@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import type { TaskItem, WorkspaceData } from "@/db/task-store";
 
@@ -65,7 +66,7 @@ export default function ReadOnlyBoard({ initialData }: { initialData: WorkspaceD
         <div className="readonly-board-controls">
           <span className="readonly-refresh-status">Actualizado {timeLabel(updatedAt)}</span>
           <button className="readonly-refresh-button" type="button" disabled={refreshing} onClick={() => void refresh()}>{refreshing ? "Actualizando…" : "↻ Actualizar"}</button>
-          <a className="readonly-return-button" href="/">Volver a Tasker</a>
+          <Link className="readonly-return-button" href="/">Volver a Tasker</Link>
         </div>
       </header>
 

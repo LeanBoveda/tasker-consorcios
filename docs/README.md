@@ -1,6 +1,6 @@
 # Documentación de Tasker Consorcios
 
-Esta carpeta reúne la documentación funcional, administrativa y técnica de Tasker. El contenido refleja el estado real de la aplicación publicado en agosto de 2026.
+Esta carpeta reúne la documentación funcional, administrativa y técnica de Tasker. El contenido refleja el estado real de la aplicación publicado en octubre de 2026.
 
 ## Documentos disponibles
 
@@ -19,7 +19,7 @@ Esta carpeta reúne la documentación funcional, administrativa y técnica de Ta
 - Código fuente: <https://github.com/LeanBoveda/tasker-consorcios>
 - Alojamiento actual: OpenAI Sites.
 - Base de datos de producción: Cloudflare D1, enlace lógico `DB`.
-- Tablas: `users`, `sessions`, `consorcios`, `tasks`, `comments`, `automatic_intake`, `daemon_instances` y `daemon_sources`.
+- Tablas: `users`, `sessions`, `consorcios`, `tasks`, `comments`, `notifications`, `activity_log`, `automatic_intake`, `daemon_instances` y `daemon_sources`.
 
 ## Cómo mantener esta documentación
 

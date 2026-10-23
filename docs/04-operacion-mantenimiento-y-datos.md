@@ -30,6 +30,8 @@ Tablas verificadas en producción:
 - `consorcios`
 - `tasks`
 - `comments`
+- `notifications`
+- `activity_log`
 - `automatic_intake`
 - `daemon_instances`
 - `daemon_sources`
@@ -45,6 +47,8 @@ Usos habituales:
 - `users`: revisar usuarios activos o dados de baja.
 - `tasks`: consultar tareas y relaciones.
 - `comments`: revisar comentarios por tarea.
+- `notifications`: avisos personales y su estado de lectura.
+- `activity_log`: historial inmutable de acciones relevantes.
 - `consorcios`: revisar el catálogo.
 - `sessions`: diagnosticar sesiones; normalmente no debe editarse manualmente.
 - `automatic_intake`: mensajes recibidos y su vínculo con tareas.
@@ -145,14 +149,13 @@ Para migrar a Vercel habría que reemplazar o adaptar la base de datos, el acces
 
 Cuando cambie `db/schema.ts`:
 
-1. Actualizar también la inicialización compatible en `db/database.ts`.
-2. Ejecutar `npm run db:generate`.
-3. Revisar el SQL generado en `drizzle/`.
-4. Verificar claves foráneas, índices y datos existentes.
-5. Compilar y probar sobre una base local.
-6. Publicar con la migración incluida.
+1. Ejecutar `npm run db:generate`.
+2. Revisar el SQL generado en `drizzle/`.
+3. Verificar claves foráneas, índices y datos existentes.
+4. Ejecutar lint, compilación y pruebas sobre una base local.
+5. Publicar con la migración incluida.
 
-No se deben borrar migraciones ya aplicadas en producción.
+No se deben borrar ni modificar migraciones ya aplicadas en producción, ni crear tablas desde una solicitud.
 
 ## 10. Solución de problemas
 

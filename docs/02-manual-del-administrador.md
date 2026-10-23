@@ -8,9 +8,11 @@ El administrador puede:
 - Importar usuarios desde Excel o CSV.
 - Editar nombre, usuario, rol y contraseña de cualquier perfil activo.
 - Dar de baja perfiles.
-- Eliminar tareas que tenga visibles.
+- Ver, editar y eliminar tareas de todo su espacio.
+- Consultar el historial de actividad del equipo.
+- Revisar notificaciones internas e ingresos automáticos.
 
-El rol no otorga acceso automático a todas las tareas privadas.
+Los administradores tienen una vista global de las tareas del espacio. Los usuarios comunes solo ven las tareas que crearon o que les asignaron.
 
 ## 2. Administrador inicial
 
@@ -158,9 +160,7 @@ El consorcio deja de aparecer en el catálogo. Las tareas existentes conservan e
 
 Actualmente no existe una pantalla para:
 
-- Ver todas las tareas privadas del equipo.
 - Recuperar automáticamente una contraseña por correo.
 - Restaurar tareas eliminadas.
 - Exportar toda la base de datos desde la aplicación.
-- Consultar un registro de auditoría independiente.
 - Enviar notificaciones externas.

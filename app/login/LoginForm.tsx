@@ -39,7 +39,7 @@ export default function LoginForm() {
 
   return (
     <form className="login-form" onSubmit={submit} aria-busy={loading}>
-      <label>Usuario<input name="username" autoComplete="username" required autoFocus disabled={loading} placeholder="Tu usuario" /></label>
+      <label>Usuario<input name="username" autoComplete="username" required disabled={loading} placeholder="Tu usuario" /></label>
       <label>Contraseña<input name="password" type="password" autoComplete="current-password" required disabled={loading} placeholder="Tu contraseña" /></label>
       {error && <p className="login-error">{error}</p>}
       <button className="login-button" type="submit" disabled={loading}>{loading ? "Ingresando…" : "Ingresar"}</button>

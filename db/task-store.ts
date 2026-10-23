@@ -114,6 +114,7 @@ export type DaemonInstanceItem = {
   sources: DaemonSourceItem[];
 };
 export type WorkspaceData = {
+  loadedAt: number;
   currentUser: AppUser;
   users: AppUser[];
   consorcios: ConsortiumItem[];
@@ -256,6 +257,7 @@ export async function loadWorkspace(identity: AuthIdentity): Promise<WorkspaceDa
   }
 
   return {
+    loadedAt: Date.now(),
     currentUser: user,
     users: usersResult.results ?? [],
     consorcios: consorciosResult.results ?? [],
